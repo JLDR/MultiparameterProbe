@@ -116,6 +116,7 @@ void help(void);
 uint16_t detect_entier(char *, String);
 float detect_float(char *, String);
 uint16_t Convert_DecASCII_to_uint16(char *);
+uint32_t Convert_DecASCII_to_uint32(char *);
 uint8_t ConvertUint16ToASCIIChar(char *, uint16_t);
 uint8_t ConvertUint32ToASCIIChar(char *, uint32_t);
 float AtlasProbesMeasure(Atlas_address_t);
