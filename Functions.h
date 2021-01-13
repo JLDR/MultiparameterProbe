@@ -49,7 +49,7 @@
 #define       Compensate_temp     "T,"
 #define       Request_CompT       "T,?"
 
-#define       zero                0.000001
+#define       zero                0.0001
 #define       Sign_Mask           0x80000000        // for float numbers defined with 4 bytes
 
 #define       messagesON
@@ -114,7 +114,7 @@ void DisplayFrameFromStamp(char *);
 char *parseInfo(Atlas_address_t);
 void help(void);
 uint16_t detect_entier(char *, String);
-float detect_float(char *, String);
+boolean detect_float(char *);
 uint16_t Convert_DecASCII_to_uint16(char *);
 uint32_t Convert_DecASCII_to_uint32(char *);
 uint8_t ConvertUint16ToASCIIChar(char *, uint16_t);

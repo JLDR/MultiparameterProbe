@@ -20,9 +20,9 @@ char                        StampCmd[20];
 char                        TabASCII[20];
 char                        TerminalCde[20];
 char                        MyAnswer[4];                  // used for short answers
+char                        FloatAscii[6];
 char                        Uint16DecAscii[5];
 char                        Uint32DecAscii[10];
-boolean                     flottant_received;
 uint8_t                     test_drapeaux;
 char                        ConvUintxx_tToAsciiChar[20];
 Atlas_address_t             TokenAddressInProgress;
@@ -408,21 +408,19 @@ uint16_t detect_entier(char *ptr_mess, String Cde) {
 /* float number. We have to transmit parameters to the function's arguments and Cde contains only litteral values without the     */
 /* digits of the float number. Precision of the float number depends of 4 bytes.                                                  */
 /**********************************************************************************************************************************/
-float detect_float(char *ptr_mess, String Cde) {
+boolean detect_float(char *ptr_mess) {
+  uint8_t k = 0;
   float MyFloat;
-  uint8_t t = 0;
   memset(TabASCII, Null, sizeof(TabASCII));
-  MyFloat = zero;
-  ptr_mess += Cde.length() * sizeof(char);              // to point the first digit after the command's name
-  flottant_received = false;
-  while (((uint8_t)*ptr_mess >= 0x30 && (uint8_t)*ptr_mess <= 0x39) || ((uint8_t)*ptr_mess == 0x2E)) {       // ASCII char '.' = 0x2E
-    TabASCII[t++] = *(ptr_mess++);    // we retrieve the digits after the command name knowed
-  }
-  if (t > 0) {
-    flottant_received = true;
+  do {
+    if (isDigit(*ptr_mess) || (uint8_t)*ptr_mess == 0x2E) {       // ASCII char '.' = 0x2E
+      TabASCII[k] = *ptr_mess;
+    } else return false;
+  } while (*(ptr_mess++) != '\0');
+  if (k > 0) {
     MyFloat = atof(TabASCII);
-  }
-  return MyFloat;
+    if (MyFloat > zero) return true;
+  } else return false;
 }
 /**********************************************************************************************************************************/
 /* Function to replace the standard method atoi(). The aim is to convert an ASCII representation of an integer number in value.   */
@@ -720,7 +718,7 @@ void change_add_I2C(String Cde_received) {
           InComingByte = Serial.read();                       // virtual int read(void); from HardwareSerial.h due to larger datas from UART buffer
           MyAnswer[k++] = (char)InComingByte;
         }
-      } while(InComingByte != '\n' || InComingByte != '\r');  // We wait the answer of the operator Yes or No
+      } while (InComingByte != '\n' || InComingByte != '\r'); // We wait the answer of the operator Yes or No
       MyAnswer[k] = Null;
       if (MyAnswer[0] == 'y' || MyAnswer[0] == 'Y') {
         I2C_call(&TabASCII[0], TokenAddressInProgress, NbrCdeChar);  // void I2C_call(char *Cde_busI2C, Atlas_address_t ADDRESS, uint8_t nbr_carCde)
@@ -892,6 +890,7 @@ void Calibration(String Cde_received) {
   String LocalCde;
   String PartCde;
   uint8_t k;
+  float MyFloat;
   uint8_t NbrDigits;
   uint8_t CdeLength;
   uint16_t CalLowValue;
@@ -907,7 +906,10 @@ void Calibration(String Cde_received) {
     Serial.println(F("Conductivity probe:\t1) 'caldry' to get the zero calibration with the probe out of water"));
     Serial.println(F("\t\t\t2) 'cal'<DDDD> to get a ONE point calibration with integer value lower than 5000"));
     Serial.println(F("\t\t\t3) 'callow'<DDDDD> for a TWO points calibration with integer value lower than 30000"));
-    Serial.println(F("\t\t\t   'calhigh'<DDDDDD> for a TWO points calibration with integer value between 1000 and 100000"));
+    Serial.println(F("\t\t\t4) 'calhigh'<DDDDDD> for a TWO points calibration with integer value between 1000 and 100000\n"));
+    Serial.println(F("pH sensor:\t1) 'calmid'<7.00> to get the middle point calibration with a reference solution as 7.00"));
+    Serial.println(F("\t\t2) 'callow'<4.00> to get the low point calibration with a reference solution as 4.00"));
+    Serial.println(F("\t\t3) 'calhigh'<10.00> to get the high point calibration with a reference solution as 10.00"));
     return;
   }
   
@@ -924,8 +926,43 @@ void Calibration(String Cde_received) {
   } else {
     switch (ProbeSelected) {                        // used in ShowFocus() function (token_t ProbeSelected;)
       case ph:
-        Serial.println(F("pH sensor"));
-
+        if (isAlpha(TerminalCde[0]) == true) {
+          if (TerminalCde[0] == 'm') {                            // 'calmid'<7.00>
+            PartCde = Cde_received.substring(0, 3);               // to retrieve "mid"
+            if (PartCde = "mid") {
+              Cde_received = Cde_received.substring(3);           // to delete the next 3 characters 'mid'
+              LocalCde = Cmd_Cal_mid;                             // "Cal,mid,"
+            }
+          } else if (TerminalCde[0] == 'h') {
+            PartCde = Cde_received.substring(0, 4);               // to retrieve "high"
+            if (PartCde = "high") {
+              Cde_received = Cde_received.substring(4);           // to delete the next 3 characters 'mid'
+              LocalCde = Cmd_Cal_high;                            // "Cal,high,"
+            }
+          } else if (TerminalCde[0] == 'l') {
+            PartCde = Cde_received.substring(0, 3);               // to retrieve "low"
+            if (PartCde = "low") {
+              Cde_received = Cde_received.substring(3);           // to delete the next 3 characters 'mid'
+              LocalCde = Cmd_Cal_low;                             // "Cal,low,"
+            }
+          } else {
+            Serial.println(F("[ERROR] The calibration command does not fit anything knowed..."));
+            return;
+          }  
+          memset(FloatAscii, Null, sizeof(FloatAscii));
+          Cde_received.toCharArray(FloatAscii, Cde_received.length() + 1);   
+          if (detect_float(&FloatAscii[0])) {
+            memset(StampCmd, Null, sizeof(StampCmd));
+            CdeLength = LocalCde.length();
+            LocalCde.toCharArray(StampCmd, CdeLength + 1);
+            k = 0;
+            while (FloatAscii[k] != '\0') {
+              StampCmd[CdeLength + k] = FloatAscii[k++];
+            }   
+            CdeLength += k;  
+            I2C_call(&StampCmd[0], TokenAddressInProgress, CdeLength);  // TokenAddressInProgress update by ShowFocus() call  
+          }
+        }
         break;
       case oxy:
         Serial.println(F("Dissolved Oxygen sensor"));
@@ -960,9 +997,9 @@ void Calibration(String Cde_received) {
             Serial.println(F("You must use an other calibration solution between 10 µS and 5000 µS..."));
             return;
           }
-        } else if (isAlpha(TerminalCde[0]) == true) {        // depends of the message either it is TWO points calibration or it is a dry calibration
+        } else if (isAlpha(TerminalCde[0]) == true) {         // depends of the message either it is TWO points calibration or it is a dry calibration
           if (TerminalCde[0] == 'd') {
-            if (Cde_received = "dry") {
+            if (Cde_received = "dry") {                       // after reduction it only stays "dry"
               memset(StampCmd, Null, sizeof(StampCmd));
               LocalCde = Cal_EC_Dry;                          // "Cal,dry"
               CdeLength = LocalCde.length();
