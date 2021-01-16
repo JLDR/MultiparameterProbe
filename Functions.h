@@ -142,7 +142,7 @@ float ConductivityMeasure(boolean);
 float pHMeasure(boolean);
 float OxyMeasure(boolean);
 float TempMeasure(boolean);
-
+uint8_t GetNbrOfChar(char *);
 
 
 
