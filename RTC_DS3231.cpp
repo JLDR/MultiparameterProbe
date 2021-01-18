@@ -8,7 +8,7 @@ char                        ConvAsciiToInt[5];            // tableau de '0' à "
 char                        CdeAsciiArray[40];
 uint8_t                     heures, minutes, secondes, DOW, jour, mois, short_annee;
 uint16_t                    annee;
-uint8_t                     heures_lues, minutes_lues, secondes_lues, jour_lu, mois_lu, annee_lue;
+uint8_t                     HoursInRTC, MinutesInRTC, SecondsInRTC, DayInRTC, MonthInRTC, YearInRTC;
 uint8_t                     check_date, check_month, check_year;
 uint8_t                     check_heure, check_minutes;
 uint8_t                     cycle_saison;   // contient 0x5B ou 0xA4
@@ -26,26 +26,24 @@ uint16_t                    scratchRTC_16bits;
 uint8_t                     scratchRTC_8bits;
 uint16_t                    lecture_masqueRTC;
 
-// Instanciation d'objets
-static Eeprom24C32_64 eeprom(EEPROM_ADDRESS);   // instanciation de l'objet appelé eeprom https://forum.arduino.cc/index.php?topic=38143.0
+/* Class instances which are objects with public methods and private attributes */
+static Eeprom24C32_64 eeprom(EEPROM_ADDRESS);   // https://forum.arduino.cc/index.php?topic=38143.0
 RTClib MyRTC;
-DateTime MyTime;        // instanciation d'un objet DateTime dont la méthode vide (constructeur) initialise l'objet courant soit temps
+DateTime MyTime;        // DateTime is a class and MyTime is an object of this class
 DS3231 MylocalRTC;
 
 /****************************************************************************************************/
-/* On récupère les paramètres transmis qui sont contenus dans la commande 'cfgtime_'<hhmmss>.       */
-/* Chaque information transmise correspond à un caractère ASCII et pour les nombres, les valeurs    */
-/* entières sont comprises entre 0x30 et 0x39.                                                      */
+/* We retrieve the parameters which are contained in the control command: 'cfgtime_'<hhmmss>.       */
 /****************************************************************************************************/
 void Change_heure(String Cde_received) {                                  // cfgtime_hhmmss
   uint8_t k = 0;
   MylocalRTC.setClockMode(false);                                         // 24 hours cycle
   memset(CdeAsciiArray, '\0', sizeof(CdeAsciiArray));
   memset(ConvAsciiToInt, '\0', sizeof(ConvAsciiToInt));
-  Cde_received = Cde_received.substring(8);  
-  Cde_received.toCharArray(CdeAsciiArray, Cde_received.length() + 1);     // lié au caractère null de fin de tableau '\0'
-  ConvAsciiToInt[0] = CdeAsciiArray[k++];                                 // dizaine des heures qui ont été transmises
-  ConvAsciiToInt[1] = CdeAsciiArray[k++];                                 // valeur retenue pour définir le changement d'horaire
+  Cde_received = Cde_received.substring(8);                               // to remove the text "cfgtime_"
+  Cde_received.toCharArray(CdeAsciiArray, Cde_received.length() + 1);     // useful to the end of the array '\0'
+  ConvAsciiToInt[0] = CdeAsciiArray[k++];
+  ConvAsciiToInt[1] = CdeAsciiArray[k++];
   ConvAsciiToInt[2] = '\0';
   heures = Conv2AsciiCharToUint8_t(&ConvAsciiToInt[0]);
   ConvAsciiToInt[0] = CdeAsciiArray[k++];
@@ -63,16 +61,15 @@ void Change_heure(String Cde_received) {                                  // cfg
         MylocalRTC.setMinute((byte)minutes);
         MylocalRTC.setHour((byte)heures);
         drapeaux_maj |= (1<<flag_maj_heure);
-      }
-    }
-  }
+      } else Serial.println(F("The second value must be a digit from 0 to 59 included"));
+    } else Serial.println(F("The minute value must be a digit from 0 to 59 included"));
+  } else Serial.println(F("The hour value must be a digit from 0 to 23 included"));
 }
 /****************************************************************************************************/
-/* La fonction ci-dessous n'est jamais sollicitée entre 2H00 et 3H00 du matin, ce qui implique que  */
-/* quand le drapeau concerné est activé, on peut définir la période hivernale ou estivale. C'est le */
-/* programme principal qui se charge d'écrire en eeprom la valeur 0x5B aux adresses 0x200 ou 0x201. */
-/* Le tableau TabASCII[] correspond au conteneur du texte lu avec le terminal.                      */
-/* La commande est du type : 'cfgdate_'<aaaammjj>                                                   */
+/* The function below is never called between 2H00 and 3H00 of the morning, those involves that a   */
+/* flag is activated to define the winter or summer period. Writing from main program the 0x5B value*/
+/* at addresses 0x200 or 0x201.                                                                     */
+/* Control command from the terminal is: 'cfgdate_'<aaaammjj>                                       */
 /****************************************************************************************************/
 void Change_date(String Cde_received) {
   uint8_t k = 0;
@@ -80,14 +77,14 @@ void Change_date(String Cde_received) {
   memset(ConvAsciiToInt, '\0', sizeof(ConvAsciiToInt));
   Cde_received = Cde_received.substring(8);
   Cde_received.toCharArray(CdeAsciiArray, Cde_received.length() + 1);
-  ConvAsciiToInt[0] = CdeAsciiArray[k++];                     // premier chiffre de l'année
+  ConvAsciiToInt[0] = CdeAsciiArray[k++];
   ConvAsciiToInt[1] = CdeAsciiArray[k++];
-  ConvAsciiToInt[2] = CdeAsciiArray[k++];                     // ceux qui nous intéressent pour le changement d'horaire
+  ConvAsciiToInt[2] = CdeAsciiArray[k++];                     // those digits which interest us
   ConvAsciiToInt[3] = CdeAsciiArray[k++];
   ConvAsciiToInt[4] = '\0';
-  annee = Conv5AsciiCharToUint16_t(&ConvAsciiToInt[0]);       // format long
-  short_annee = Conv2AsciiCharToUint8_t(&ConvAsciiToInt[2]);
-  check_year = Conv2AsciiCharToUint8_t(&CdeAsciiArray[2]);    // format court pour calculer l'indice dans les tableaux pour identifier le changement d'horaire
+  annee = Conv5AsciiCharToUint16_t(&ConvAsciiToInt[0]);       // long format
+  short_annee = Conv2AsciiCharToUint8_t(&ConvAsciiToInt[2]);  // short format
+  check_year = Conv2AsciiCharToUint8_t(&CdeAsciiArray[2]);    // used to calculate the new time when the it changes 
   ConvAsciiToInt[0] = CdeAsciiArray[k++];
   ConvAsciiToInt[1] = CdeAsciiArray[k++];
   ConvAsciiToInt[2] = '\0';
@@ -109,11 +106,11 @@ void Change_date(String Cde_received) {
   }
   if (check_year >= 18 && check_year <= 99) {
     drapeaux_maj |= (1<<flag_maj_date);         // lorsque la carte démarre ce drapeau est supprimé
-    Serial.print(F("Analyse de l'année avec check_year : "));
+    Serial.print(F("To check the year value stored: "));
     Serial.println(check_year, DEC);
-    Serial.print(F("Analyse du mois avec check_month : "));
+    Serial.print(F("To check the month value stored: "));
     Serial.println(check_month, DEC);
-    Serial.print(F("Analyse du jour avec check_date : "));
+    Serial.print(F("To check the date value stored: "));
     Serial.println(check_date, DEC);
   }
 }
@@ -131,12 +128,11 @@ void Change_DoW(String Cde_received) {
   if (DayOfTheWeek > 0 && DayOfTheWeek <= 7) MylocalRTC.setDoW(DayOfTheWeek);
 }
 /********************************************************************************************************/
-/* Lecture du temps et de la date stockés dans le circuit spécialisé DS3231.                            */
-/* Différence entre FORMAT_SHORT et FORMAT_LONG => 17 devient 2017                                      */
+/* Reading of the register values of the RTC circuit DS3231.                                            */
+/* difference between FORMAT_SHORT and FORMAT_LONG => 17 becomes 2017                                   */
 /* FORMAT_LITTLEENDIAN => 13/04/2017, FORMAT_BIGENDIAN => 2017/04/13, FORMAT_MIDDLEENDIAN => 04/13/2017 */
-/* La fonction Affiche_heure met à jour heures_lues, minutes_lues et secondes_lues.                     */
-/* En lisant l'heure, on récupère une pointeur qui est initialisé sur le premier caractère d'une chaîne */
-/* comprenant 8 caractères.                                                                             */
+/* The function Affiche_heure updates HoursInRTC, MinutesInRTC et SecondsInRTC.                         */
+/* Reading time, we retrieve a pointer which has been initialized on the first position of a string.    */
 /********************************************************************************************************/
 void lecture() {
   uint8_t var, k;
@@ -145,12 +141,12 @@ void lecture() {
   separateur1(61, '-');
   Serial.println(F("lecture of the content of the RTC circuit : day, month and year"));
   separateur1(61, '-');
-  jour_lu = (uint8_t)MylocalRTC.getDate();
-  Serial.print(F("day: ")); Serial.println(jour_lu, DEC);
-  mois_lu = (uint8_t)MylocalRTC.getMonth(Century);
-  Serial.print(F("month: ")); Serial.println(mois_lu, DEC);
-  annee_lue = (uint8_t)MylocalRTC.getYear();
-  Serial.print(F("year: ")); Serial.print(annee_lue, DEC);
+  DayInRTC = (uint8_t)MylocalRTC.getDate();
+  Serial.print(F("day: ")); Serial.println(DayInRTC, DEC);
+  MonthInRTC = (uint8_t)MylocalRTC.getMonth(Century);
+  Serial.print(F("month: ")); Serial.println(MonthInRTC, DEC);
+  YearInRTC = (uint8_t)MylocalRTC.getYear();
+  Serial.print(F("year: ")); Serial.print(YearInRTC, DEC);
   DOW = (uint8_t)MylocalRTC.getDoW();
   Serial.print(F("\n- Date Of the Week: "));
   Serial.print(DOW, DEC);
@@ -162,34 +158,33 @@ void lecture() {
   Serial.println(temps_UNIX);
 }
 /****************************************************************************************************/
-/* Affichage de l'heure. L'argument transmis à cette fonction est un objet de la classe Time.       */
-/* Cette fonction met à jour les variables heures_lues, minutes_lues et secondes_lues.              */
+/* To display the time. MyRTC is an object of the RTClib class. MyTime is an object of the DateTime */
+/* class. This function updates commun variables HoursInRTC, MinutesInRTC et SecondsInRTC.          */
 /****************************************************************************************************/
 void Affiche_heure() {
   MyTime = MyRTC.now();
   Serial.print(F("Heure lue : "));
-  heures_lues = MyTime.hour();                    // uint8_t (hh)
-  if (heures_lues <= 9) {
+  HoursInRTC = MyTime.hour();                    // uint8_t (hh)
+  if (HoursInRTC <= 9) {
     Serial.print('0');
-    Serial.print((char)(heures_lues + 0x30));
-  } else Serial.print(heures_lues, DEC);
+    Serial.print((char)(HoursInRTC + 0x30));
+  } else Serial.print(HoursInRTC, DEC);
   Serial.print(':');
-  minutes_lues = MyTime.minute();                 // uint8_t (mm)
-  if (minutes_lues <= 9) {
+  MinutesInRTC = MyTime.minute();                 // uint8_t (mm)
+  if (MinutesInRTC <= 9) {
     Serial.print('0');
-    Serial.print((char)(minutes_lues + 0x30));
-  } else Serial.print(minutes_lues, DEC);
+    Serial.print((char)(MinutesInRTC + 0x30));
+  } else Serial.print(MinutesInRTC, DEC);
   Serial.print(':');
-  secondes_lues = MyTime.second();                // ss
-  if (secondes_lues <= 9) {
+  SecondsInRTC = MyTime.second();                // ss
+  if (SecondsInRTC <= 9) {
     Serial.print('0');
-    Serial.println((char)(secondes_lues + 0x30));
-  } else Serial.println(secondes_lues, DEC);
+    Serial.println((char)(SecondsInRTC + 0x30));
+  } else Serial.println(SecondsInRTC, DEC);
 }
 /****************************************************************************************************/
-/* On convertit un tableau de 2 caractères ASCII identifiés en un entier de 8 bits pour une valeur  */
-/* de 0 à 99. Le premier paramètre transmis correspond au poids fort de l'entier qui ne peut pas    */
-/* dépasser 99.                                                                                     */
+/* We convert an array of 2 ASCII characters into an unsigned integer of 8 bits to retrieve a value */
+/* from 0 to 99. the first parameter transmitted is the most significative digit.                   */
 /****************************************************************************************************/
 uint8_t Conv2AsciiCharToUint8_t(char *ptr_ascii) {
   uint8_t scratch_8bits = 0;
@@ -207,7 +202,7 @@ uint8_t Conv2AsciiCharToUint8_t(char *ptr_ascii) {
   else return scratch_8bits;
 }
 /****************************************************************************************************/
-/* Séparateur                                                                                       */
+/* Text divider                                                                                     */
 /****************************************************************************************************/
 void separateur1(uint8_t nbr_carac, char caract) {
   uint8_t i;
@@ -217,8 +212,8 @@ void separateur1(uint8_t nbr_carac, char caract) {
   Serial.println();
 }
 /****************************************************************************************************/
-/* Conversion d'un tableau de char représentant une chaîne ASCII de 5 caractères au maximum pour    */
-/* représenter un entier non signé de 16 bits (<65536).                                             */
+/* Conversion of an array which represent an ASCII string with a maximum of 5 characters.           */
+/* The integer sended is a 16 bits unsigned (<65536).                                               */
 /****************************************************************************************************/
 uint16_t Conv5AsciiCharToUint16_t(char *ptr_array) {
   uint8_t n = 0;      // doit permettre d'identifier les caractères ASCII interprétables
@@ -265,7 +260,7 @@ uint16_t Conv5AsciiCharToUint16_t(char *ptr_array) {
   else return (uint16_t)entier_verif;
 }
 /****************************************************************************************************/
-/* Menu Help pour identifier les commandes possibles avec l'horloge RTC de type DS3231.             */
+/* Menu Help to identify all control commands allowed with the DS3231 RTC circuit.                  */
 /****************************************************************************************************/
 void helprtc() {                         //print help dialogue
   separateur1(92, '=');

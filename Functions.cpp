@@ -921,7 +921,7 @@ void Calibration(String Cde_received) {
   Cde_received.toCharArray(TerminalCde, Cde_received.length() + 1);
   
   if (TerminalCde[0] == '?') {
-    Divider(100, '-');
+    Divider(120, '-');
     Serial.println(F("**** Control commands for the probes calibration ****"));
     Serial.println(F("Conductivity probe:\t\t\t1) 'caldry' to get the zero calibration with the probe out of water"));
     Serial.println(F("\t\t\t\t\t2) 'cal'<DDDD> to get a ONE point calibration with integer value lower than 5000"));
@@ -932,9 +932,9 @@ void Calibration(String Cde_received) {
     Serial.println(F("\t\t\t\t\t3) 'calhigh'<10.00> to get the high point calibration with a reference solution as 10.00\n"));
     Serial.println(F("Dissolved Oxygen sensor:\t\t1) 'calhigh' to calibrate the sensor to atmospheric oxygen level (20.95 %)"));
     Serial.println(F("\t\t\t\t\t2) 'calzero' to get the low point calibration with sodium bisulfite(0 %)\n"));
-    Serial.println(F("Oxydo Reduction Potential probe:\t1) 'cal'<DDD> to get only one point calibration using stanadard solution in mV"));
+    Serial.println(F("Oxydo Reduction Potential probe:\t1) 'cal'<DDD> to get only one point calibration using stanadard solution in mV\n"));
     Serial.println(F("RTD probe:\t\t\t\t1) 'cal'<DDD.DD> to calibrate the temperature probe using any temperature measure considered as reference"));
-    Divider(100, '-');
+    Divider(120, '-');
     return;
   }
   
@@ -1027,7 +1027,7 @@ void Calibration(String Cde_received) {
             //DisplayNbrCalPoints();
           }
         } else {
-          Serial.println(F("[ERROR] The command looks like 'cal'<220> for a 220 mV reference potential electrode at 20 °C"));
+          Serial.println(F("[ERROR] The command looks like 'cal'<220> for a 220 mV reference potential electrode at 25 °C"));
           return;
         }
         break;

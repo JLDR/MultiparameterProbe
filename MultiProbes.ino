@@ -13,6 +13,7 @@
 /* ############################################################################################################## */
 #include      "Functions.h"
 #include      "veml7700_functions.h"
+#include      "RTC_DS3231.h"
 
 /******************************* local variables *******************************/
 float                       Mes_Temp, Mes_pH, Mes_EC, Mes_ORP, Mes_DO, Mes_RTD;
@@ -88,8 +89,13 @@ void loop() {
     if (Command.startsWith(F("temp"))) Mes_Temp = TempMeasure(DS18B20Present);
     if (Command.startsWith(F("token"))) CheckSetFocus(Command);       // 'token?' or 'token_'<probe>, probe is ph, oxy, orp, cond, rtd or none  
     if (Command.startsWith(F("repeat"))) SamplingState = SamplingDelayMeasure(Command, SamplingState);
-    
-    computer_msg_complete = false;                    // Reset the var computer_bytes_received to equal 0
+
+    if (Command.startsWith("cfgtime_")) Change_heure(Command);        // 'cfgtime_'<hhmmss>
+    if (Command.startsWith("cfgdate_")) Change_date(Command);         // 'cfgdate_'<aaaammjj>
+    if (Command.startsWith("cfgdow_")) Change_DoW(Command);           // 'cfgdow_'<d>
+    if (Command.startsWith("lecture")) lecture();
+    if (Command.startsWith("helprtc")) helprtc();                     // spécifique à l'horloge RTC
+    computer_msg_complete = false;    // Reset the var computer_bytes_received to equal 0
   }
 
 

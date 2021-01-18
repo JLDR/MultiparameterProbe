@@ -1,6 +1,9 @@
 /* ******************************************************************************************** */
 /* Methods from the official library supplied by Arduino.                                       */
 /* https://www.arduinolibraries.info/libraries/ds3231                                           */
+/* Arduino library for the DS3231 real-time clock (RTC)                                         */
+/* Author: Andrew Wickert, Website: https://github.com/NorthernWidget/DS3231                    */
+/* version = 1.0.2                                                                              */
 /* ******************************************************************************************** */
 #ifndef RTC_DS3231_H_
 #define RTC_DS3231_H_     1
@@ -80,4 +83,11 @@ void RemainingTime(char *);
 
 
 
-#endif /* FONCTIONS_H_ */
+#endif                        /* RTC_DS3231_H_ */
+
+
+
+
+
+
+/* END OF FILE */
