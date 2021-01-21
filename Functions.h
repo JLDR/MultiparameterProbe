@@ -1,6 +1,8 @@
 /* ******************************************************************************************** */
-/* Ensemble de fonctions dédiées pour cette application.                    */
+/* Global functions for the multiparameters probe with Atlas Scientific devices.                */
 /* ******************************************************************************************** */
+// Author: Jean-Louis Druilhe (jean-louis.druilhe@univ-tlse3.fr)
+
 #ifndef FUNCTIONS_H_
 #define FUNCTIONS_H_        1
 
@@ -112,7 +114,7 @@ uint8_t check_i2c_connection(uint8_t);
 void I2C_call(char *, Atlas_address_t, uint8_t);
 void DisplayFrameFromStamp(char *);
 char *parseInfo(Atlas_address_t);
-void help(void);
+void help(String);
 uint16_t detect_entier(char *, String);
 boolean detect_float(char *);
 uint16_t Convert_DecASCII_to_uint16(char *);
@@ -126,7 +128,7 @@ void ShowFocus(void);
 void CompensatedTemp_pH_DO(String);
 void Calibration(String);
 void DeleteCalibration(String);
-void DisplayNbrCalPoints(void);
+void DisplayNbrCalPoints(String);
 void initI2C_Devices(void);
 boolean DallasTemperatureSearch(void);
 void AfficheAdresseCapteur(void);
@@ -143,7 +145,8 @@ float pHMeasure(boolean);
 float OxyMeasure(boolean);
 float TempMeasure(boolean);
 uint8_t GetNbrOfChar(char *);
-
+uint8_t DisplayAsciiArray(char *);
+uint8_t Concatenate2Arrays(char *, char *, char *);
 
 
 

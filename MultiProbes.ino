@@ -73,14 +73,14 @@ void loop() {
     Serial.print(F("Command from terminal: "));       // echo to the serial console
     Serial.println(cmd);
     Command = String(cmd);
-    if (Command.startsWith("help")) help();           // if help entered...call help dialogue https://www.arduino.cc/en/Reference/StringConstructor
+    if (Command.startsWith("help")) help(Command);                    // if help entered...call help dialogue https://www.arduino.cc/en/Reference/StringConstructor
     if (Command.startsWith("scan")) ConnectedProbes = scani2c();      // if i2c-scan requested
     if (Command.startsWith("chang_add")) change_add_I2C(Command);     // Cde = 'change_add'<105> (between 1 and 127)
     if (Command.startsWith("meas")) AllSensorMeasures = Reading_probes(Command);
     if (Command.startsWith("comp")) CompensatedTemp_pH_DO(Command);   // Temperature compensation when pH probe is calibrate 'comp'<DD.D>
     if (Command.startsWith("cal")) Calibration(Command);              // this command needs to know which probe has got the focus
     if (Command.startsWith("delete")) DeleteCalibration(Command);
-    if (Command.startsWith("calpoint")) DisplayNbrCalPoints();
+    if (Command.startsWith("calpoint")) DisplayNbrCalPoints(Command);
     if (Command.startsWith(F("lux"))) Mes_Lux = luxmeter(ConnectedProbes.VEML7700_Probe);
     if (Command.startsWith(F("orp"))) Mes_ORP = orpMeasure(ConnectedProbes.ORP_Probe);
     if (Command.startsWith(F("cond"))) Mes_EC = ConductivityMeasure(ConnectedProbes.EC_Probe);
