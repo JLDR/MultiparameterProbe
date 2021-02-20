@@ -20,11 +20,11 @@
 #include      <Arduino.h> 
 
 /*************************** CONSTANTS ***************************/
-#define       LF                  0x0A      // '\n'
-#define       CR                  0x0D      // '\r'
+//#define       LF                  0x0A      // '\n' this acronym is already used by the core
+//#define       CR                  0x0D      // '\r' this acronym is already used by the core
 #define       Space               0x20
 #define       Null                0         // '\0'
-#define       DS18B20Temp         10
+#define       DS18B20Temp         11
 #define       Timer0_ON           0
 #define       Timer1_ON           1
 #define       Timer2_ON           2
@@ -46,6 +46,7 @@
 #define       Cmd_Cal_high        "Cal,high,"
 #define       Cmd_CalClear        "Cal,clear"
 #define       Cmd_NbrPtsCal       "Cal,?"
+#define       InventoryText       "Probes inventory"
 
 #define       Chg_add_i2c         "I2C,"
 #define       Compensate_temp     "T,"
@@ -54,8 +55,19 @@
 #define       zero                0.0001
 #define       Sign_Mask           0x80000000        // for float numbers defined with 4 bytes
 
+/*************************** Flags ***************************/
+#define       Flag0               0                 // used by other modules too
+#define       Flag1               1
+#define       Flag2               2
+#define       Flag3               3
+#define       Flag4               4
+#define       Flag5               5
+#define       Flag6               6
+#define       Flag7               7
+
+/*************************** Shared compilation directives which have to be activated or inhibited in each header files where they are necessary ***************************/
 #define       messagesON
-//#define       SerialPlotting
+#define       GSMShield_present
 
 
 /********************************************** Predefined types **********************************************/
@@ -67,7 +79,7 @@ typedef enum I2CAddresses : uint8_t {
   RTD_Add = 0x66,                       // address_RTD_EZO
   VEML7700_Add = 0x10,
   NoI2C_Add = 0x00
-} Atlas_address_t;
+} I2CAddresses_t;
 
 typedef struct I2CStampsConnected {
   boolean DO_Probe = false;
@@ -82,10 +94,11 @@ typedef struct SamplingDelay {
   boolean RepeatedMeasures;
   uint16_t NbrSeconds;
   uint16_t NbrMinutes;
+  uint32_t CompleteIntervalInSeconds;
 } SamplingDelay_t;
 
 typedef enum token : uint8_t {        // ph, oxy, orp, cond, rtd
-  NoToken = 0x00,                     // only for Atlas Scientific probes
+  NoToken = 0x00,                     // only for Atlas Scientific probes for calibration with same control commands
   oxy = 0x01,
   orp = 0x02,
   cond = 0x03,
@@ -99,21 +112,22 @@ typedef union flottant {
 } MyFloat_t;                // for (k = 4; k > 0; k--) BigEndianFormat[k - 1] = LocalFloat.byte_value[4 - k]; /* big-endian representation */
 
 typedef struct ProbeMeasures {
-  float DO_FloatValue;
-  float pH_FloatValue;
-  float ORP_FloatValue;
-  float EC_FloatValue;
-  float Temp_FloatValue;
-  float Lux_FloatValue;
+  float DO_FloatValue;      // I2C
+  float pH_FloatValue;      // I2C
+  float ORP_FloatValue;     // I2C
+  float EC_FloatValue;      // I2C
+  float RTD_FloatValue;     // I2C
+  float Temp_FloatValue;    // OneWire
+  float Lux_FloatValue;     // I2C
 } ProbeMeasures_t;
 
-/* prototypage des fonctions de la bibliothèque */
+/* Function prototype or functions interface */
 void Init_Timers(uint8_t, uint8_t, uint16_t, uint8_t, uint16_t, uint16_t, uint16_t);
 I2CProbesConnected_t scani2c(void);
 uint8_t check_i2c_connection(uint8_t);
-void I2C_call(char *, Atlas_address_t, uint8_t);
+void I2C_call(char *, I2CAddresses_t, uint8_t);
 void DisplayFrameFromStamp(char *);
-char *parseInfo(Atlas_address_t);
+char *parseInfo(I2CAddresses_t);
 void help(String);
 uint16_t detect_entier(char *, String);
 boolean detect_float(char *);
@@ -121,7 +135,7 @@ uint16_t Convert_DecASCII_to_uint16(char *);
 uint32_t Convert_DecASCII_to_uint32(char *);
 uint8_t ConvertUint16ToASCIIChar(char *, uint16_t);
 uint8_t ConvertUint32ToASCIIChar(char *, uint32_t);
-float AtlasProbesMeasure(Atlas_address_t);
+float AtlasProbesMeasure(I2CAddresses_t);
 void change_add_I2C(String);
 void CheckSetFocus(String);
 void ShowFocus(void);
@@ -132,7 +146,7 @@ void DisplayNbrCalPoints(String);
 void initI2C_Devices(void);
 boolean DallasTemperatureSearch(void);
 void AfficheAdresseCapteur(void);
-void Divider(uint8_t, char);
+void Divider(uint8_t, boolean, char);
 float MeasureTemp(void);
 void ConvFloatToString(float, uint8_t, char *);
 void FillMyAnswerArray(void);
@@ -147,7 +161,7 @@ float TempMeasure(boolean);
 uint8_t GetNbrOfChar(char *);
 uint8_t DisplayAsciiArray(char *);
 uint8_t Concatenate2Arrays(char *, char *, char *);
-
+void InventoryProbes(I2CProbesConnected_t, boolean);
 
 
 

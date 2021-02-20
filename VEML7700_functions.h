@@ -10,7 +10,8 @@
 #include      <stdint.h>
 #include      <stdlib.h>
 
-
+/*************************** Shared compilation directives which have to be activated or inhibited in each header files where they are necessary ***************************/
+#define       messagesON                        // also defined in Functions.h
 
 /********************************************** Predefined types **********************************************/
 typedef enum AvailableGains : uint8_t {
@@ -32,12 +33,13 @@ typedef enum AvailableIT : uint8_t {
 /* Function prototype or functions interface */
 float luxmeter(boolean);
 void DisplayFeatures(void);
-void increaseGain(uint8_t);
+void increaseGain(Gain_t);
 void increaseIntegrationTime(uint8_t);
-void decreaseIntegrationTime(uint8_t);
-float ConvFunction(uint16_t, uint8_t, uint8_t);
-
-
+void increaseIntegrationTime(IntegrationTime_t);
+void decreaseIntegrationTime(IntegrationTime_t);
+float ConvFunction(uint16_t, IntegrationTime_t, Gain_t);
+boolean VEML7700Initialization(void);
+void DividerVEML7700(uint8_t, boolean, char);
 
 
 #endif /* VEML7700_FUNCTIONS_H_ */

@@ -18,8 +18,8 @@
 #define       Space                 0x20
 #define       Null                  '\0'              // 0 ou '\0'
 #define       F_cpu                 16000000UL
-#define       LF                    0x0A              // '\n'
-#define       CR                    0x0D              // '\r'
+//#define       LF                    0x0A              // '\n'
+//#define       CR                    0x0D              // '\r'
 #define       SQW_RATE_1            0                 // void enableOscillator(bool TF, bool battery, byte frequency); 
 #define       SQW_RATE_1K           1                 // oscillator OFF/ON, battery OFF/ON, frequency 0 => 1 Hz
 #define       SQW_RATE_4K           2                 // 1 => 1.024 KHz, 2 => 2.048 KHz, 3 => 8,192 KHz (default)
