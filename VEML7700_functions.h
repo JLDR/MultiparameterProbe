@@ -13,6 +13,13 @@
 /*************************** Shared compilation directives which have to be activated or inhibited in each header files where they are necessary ***************************/
 #define       messagesON                        // also defined in Functions.h
 
+/*************************** Flags ***************************/
+#define       WatchdogDelayArmed      1         // Flag to inform that the watchdog has to be armed
+#define       StopTheWatchdogTimer    2
+
+/*************************** compilation directives which are used only by this module ***************************/
+#define       BusyTimeForVEML7700     3        // maximum time for light sensor in seconds
+
 /********************************************** Predefined types **********************************************/
 typedef enum AvailableGains : uint8_t {
   MyVEML7700_GAIN_1 = 0x00,           ///< ALS gain 1x

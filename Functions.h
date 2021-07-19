@@ -9,6 +9,7 @@
 #include      <Wire.h>              // I2C library
 #include      <OneWire.h>
 #include      <DallasTemperature.h>
+#include      <Adafruit_ADS1X15.h>
 #include      <avr/interrupt.h>     /* interrupt vectors */
 #include      <avr/pgmspace.h>
 #include      <math.h>
@@ -17,7 +18,9 @@
 #include      <stdint.h>
 #include      <stdlib.h>            /* atof() function */
 #include      <avr/io.h>            /* sprintf and printf */
-#include      <Arduino.h> 
+#include      <Arduino.h>
+#include      "EEPROM.h"
+//#include      <avr/wdt.h>
 
 /*************************** CONSTANTS ***************************/
 //#define       LF                  0x0A      // '\n' this acronym is already used by the core
@@ -25,6 +28,7 @@
 #define       Space               0x20
 #define       Null                0         // '\0'
 #define       DS18B20Temp         11
+
 #define       Timer0_ON           0
 #define       Timer1_ON           1
 #define       Timer2_ON           2
@@ -32,7 +36,8 @@
 #define       Timer4_ON           4
 #define       Timer5_ON           5
 
-#define       Cmd_I               'I'
+/*************** Atlas Scientific probes ***************/
+#define       Cmd_I               'i'
 #define       Cmd_Single_Read     'R'
 #define       Cmd_Status          "Status"
 #define       Cal_DO_Atmos        "Cal"
@@ -46,29 +51,62 @@
 #define       Cmd_Cal_high        "Cal,high,"
 #define       Cmd_CalClear        "Cal,clear"
 #define       Cmd_NbrPtsCal       "Cal,?"
+#define       Cmd_SLEEP           "Sleep"
 #define       InventoryText       "Probes inventory"
-
 #define       Chg_add_i2c         "I2C,"
 #define       Compensate_temp     "T,"
 #define       Request_CompT       "T,?"
 
+/*************************** General Purpose Input Output (GPIO) functions ***************************/
+#define       GPIO_pH_isolator    8
+#define       GPIO_pH_Switch      9
+#define       GPIO_ORP_isolator   24
+#define       GPIO_ORP_Switch     26
+#define       GPIO_EC_isolator    25
+#define       GPIO_EC_Switch      27
+#define       GPIO_RTD_isolator   28
+#define       GPIO_RTD_Switch     30
+#define       GPIO_DO_isolator    29
+#define       GPIO_DO_Switch      31
+#define       GPIO_DS18_isolator  32
+#define       GPIO_DS18_Switch    34
+#define       GPIO_VEML_isolator  33
+#define       GPIO_VEML_Switch    35
+
+#define       CdeNmosRFM0505      38
+
+/*************** ADS1115 ADC ***************/
+#define       valMax              32767
+#define       ADCddpmax           4.096
+#define       Battery             1     // range between 3 volts and 4.2 volts so gain 1 using power supply +5V and resistive bridge of 1/2 (2 x 47k)
+#define       MPPToutput          2     // +5 volts, gain 1 and resistive bridge of 1/2 (2 x 47 KOhms)
+#define       SolarPanel          3     // the potential can climb to 18 volts (gain 1 and resistive bridge of 1/11 (20k + 200k) 
+
+/*************** other constants ***************/
 #define       zero                0.0001
-#define       Sign_Mask           0x80000000        // for float numbers defined with 4 bytes
+#define       Sign_Mask           0x80000000                // for float numbers defined with 4 bytes
+
+/*************************** MACRO & Functions ***************************/
+//#define wdt_reset() __asm__ __volatile__ ("wdr")            // (Watchdog Reset WDR) https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html
+//#define __inline__ __attribute__ ((__always_inline__)) void wdt_enable(const uint8_t value)           // library <avr/wdt.h>
 
 /*************************** Flags ***************************/
-#define       Flag0               0                 // used by other modules too
-#define       Flag1               1
-#define       Flag2               2
-#define       Flag3               3
-#define       Flag4               4
-#define       Flag5               5
-#define       Flag6               6
-#define       Flag7               7
+#define       UsingTimer1Interrupt      0           // used by other modules too
+#define       WatchdogDelayArmed        1           // Flag to inform that the watchdog has to be armed
+#define       StopTheWatchdogTimer      2
+#define       Flag3                     3
+#define       Flag4                     4
+#define       GSMInitialized            5
+#define       APNInitialized            6
+#define       Flag7                     7
 
 /*************************** Shared compilation directives which have to be activated or inhibited in each header files where they are necessary ***************************/
 #define       messagesON
-#define       GSMShield_present
-
+//#define       ADS115Connected
+#define       BusyTimeForProbes         8           // available measure from probe
+#define       BusyTimeForDS18B20        3
+#define       NbrMinutesToResetGSM      60          // 1 heure
+#define       FollowingErrors           2
 
 /********************************************** Predefined types **********************************************/
 typedef enum I2CAddresses : uint8_t {
@@ -81,7 +119,7 @@ typedef enum I2CAddresses : uint8_t {
   NoI2C_Add = 0x00
 } I2CAddresses_t;
 
-typedef struct I2CStampsConnected {
+typedef struct I2CStampsConnected {     // all I2C sensors
   boolean DO_Probe = false;
   boolean ORP_Probe = false;
   boolean pH_Probe = false;
@@ -121,6 +159,40 @@ typedef struct ProbeMeasures {
   float Lux_FloatValue;     // I2C
 } ProbeMeasures_t;
 
+typedef struct ElapsedTime {
+  uint16_t minutes = 0;
+  uint8_t seconds = 0;
+  boolean ResetGSM = false;
+} ElapsedTime_t;
+
+typedef struct Voltages {
+  float ddp_bat = 0.0;
+  float ddp_mppt = 0.0;
+  float ddp_panel = 0.0;
+} Voltages_t;
+
+typedef enum DeviceInProgress : uint8_t {     // to select only one device
+  pHProbe = 0,
+  ORPProbe,
+  ECProbe,
+  RTDProbe,
+  DOProbe,
+  VEML7700,
+  DS18B20,
+  AllProbes                 // For this state, all probes will be polling and the power applied for each device will depend of their boolean individual switch
+} DeviceInProgress_t;
+
+typedef struct PowerSwitches {
+  boolean pHProbePowered = false;
+  boolean ORPProbePowered = false;
+  boolean ECProbePowered = false;
+  boolean RTDProbePowered = false;
+  boolean DOProbePowered = false;
+  boolean VEML7700Powered = false;
+  boolean DS18B20Powered = false;
+  DeviceInProgress_t TheSelectedDevice;
+} PowerSwitches_t;
+
 /* Function prototype or functions interface */
 void Init_Timers(uint8_t, uint8_t, uint16_t, uint8_t, uint16_t, uint16_t, uint16_t);
 I2CProbesConnected_t scani2c(void);
@@ -153,6 +225,7 @@ void FillMyAnswerArray(void);
 uint16_t ConvASCIItoUint16(char *);
 SamplingDelay_t SamplingDelayMeasure(String, SamplingDelay_t);
 ProbeMeasures_t Reading_probes(String);
+ProbeMeasures_t RandomValues(void);
 float orpMeasure(boolean);
 float ConductivityMeasure(boolean);
 float pHMeasure(boolean);
@@ -162,8 +235,15 @@ uint8_t GetNbrOfChar(char *);
 uint8_t DisplayAsciiArray(char *);
 uint8_t Concatenate2Arrays(char *, char *, char *);
 void InventoryProbes(I2CProbesConnected_t, boolean);
-
-
+void SleepMode(I2CAddresses_t);
+ElapsedTime_t IncrementMyGSMtime(ElapsedTime_t);
+void DisplayArrayContentFunctions(char *, boolean);
+void ADCStart(adsGain_t);
+Voltages_t AcquireVoltageValues(void);
+void GPIOConfigurationAndPowerON(void);
+void IsolatorAndPowerOFF(void);
+void PowerSupplyForDevices(PowerSwitches_t);
+  
 
 
 #endif /* FONCTIONS_H_ */

@@ -9,21 +9,23 @@
 #include      "Functions.h"
 #include      "veml7700_functions.h"                      // necessary when there is a global measure applied for all probes
 
-// Local variables used by this module
+/* Local variables used by this module */
 volatile uint16_t           cmpt1, cmpt2, cmpt3, cmpt4, cmpt5, cmpt_5ms;
 volatile uint8_t            compt1, compt2, compt3, compt4, compt5, cmpt_100us;
-volatile uint8_t            Flags;
+volatile uint8_t            FlagsReader;
+uint8_t                     BusyTimeForWatchdog, Flags;   // global variables used for GSM and tied to the timers and the watchdog
+uint8_t                     WatchdogCounter = 0;
+
 uint8_t                     scratch_8bitsFunc;
 uint16_t                    scratch_16bitsFunc;
 uint32_t                    scratch_32bitsFunc;
 char                        sensordata[32];               // 32 characters array to hold incoming data from the sensors
 uint8_t                     sensor_bytes_received;        // We need to know how many characters bytes have been received
-I2CProbesConnected_t        ProbesOfInstrument;           // all I2C probes connected to the instrument
-boolean                     ProbeTempPresent;             // only for the oneWire probe DS18B20 connected or no
+I2CProbesConnected_t        I2C_ProbesOfRaft;             // all I2C probes connected to the instrument
+boolean                     DS18B20IsPresent;             // only for the oneWire probe DS18B20 connected or no
 
 char                        *ptr_String;                  // pointer to allow conversion to String declarations
 char                        ConvStringAsArray[32];
-char                        stamp_version[4];             // hold the version of the stamp
 char                        StampCmd[32];
 char                        TabASCII[20];
 char                        TerminalCde[20];
@@ -36,29 +38,31 @@ char                        ConvUintxx_tToAsciiChar[20];
 I2CAddresses_t              TokenAddressInProgress;
 token_t                     ProbeSelected;
 uint8_t                     OneWireAddress[8];
-char                        *ptr_StampType;
+char                        *ptr_StampType;                 // global pointer only used by scan function
 //String                      stamp_type;                   // hold the name (type of the stamp)
+PowerSwitches_t             MyPowerSwitches;
 
 /* External variables */
 
 /* Class instances which are objects with public methods and private attributes */
-OneWire Temp_Probe(DS18B20Temp);                    // Setup a oneWire instance to communicate with any OneWire devices
-DallasTemperature DS18B20Probe(&Temp_Probe);        // Pass our oneWire reference to Dallas Temperature
-#define MyI2CDevice       Wire
+OneWire Temp_Probe(DS18B20Temp);                // Setup a oneWire instance to communicate with any OneWire devices
+DallasTemperature DS18B20Probe(&Temp_Probe);    // Pass our oneWire reference to Dallas Temperature
+#define MyI2CDevice Wire
+Adafruit_ADS1115 MyADC;                         // instantiate an object
 
 /* #########################################Interruptions########################################## */
 /****************************************************************************************************/
 /* Programmes d'interrution des 3 compteurs. Le compteur0 est réservé par plusieurs bibliothèques.  */
 /* Timers utilisés : Timer1 (16 bits, 5 ms), Timer2 (8 bits, 100 µs)                                */
 /****************************************************************************************************/
-// Compteur 1 programmé pour des temporisations de 5 ms
+// Timer1 configured for time delay of 5 ms
 ISR(TIMER1_COMPA_vect) {
   compt1++;                           // 8 bits
   cmpt1++;                            // 16 bits
   cmpt_5ms++;                         // 16 bits
-  scratch_8bitsFunc = Flags;
-  scratch_8bitsFunc &= (1<<Flag0);    // This flag is declared by only one module at the same time
-  if (scratch_8bitsFunc != 0) {
+  FlagsReader = Flags;
+  FlagsReader &= (1<<UsingTimer1Interrupt);   // This flag is declared by only one module at the same time
+  if (FlagsReader != 0) {
     if (compt1 > 60) {
       compt1 = 0;
       Serial.print(F("."));           // Output on terminal
@@ -71,10 +75,31 @@ ISR(TIMER2_COMPA_vect) {
   cmpt2++;                      // 16 bits
   cmpt_100us++;                 // 8 bits
 }
-// Compteur 3 programmé pour des temporisations de 200 ms
+// Timer3 configured to define delay time of 200 ms
 ISR(TIMER3_COMPA_vect) {
   compt3++;                     // 8 bits
   cmpt3++;                      // 16 bits
+  
+  FlagsReader = Flags;
+  FlagsReader &= (1<<WatchdogDelayArmed);           // Common flag activated according to the need
+  if (FlagsReader != 0) {
+    Flags &= ~(1<<WatchdogDelayArmed);              // to be here only one time
+    MCUSR &= ~(1<<WDRF);                            // WDRF is cleared (MCUSR &= ~(1<<WDRF); ou MCUSR = 0;)
+    WDTCSR |= ((1<<WDCE)|(1<<WDE));                 // mandatory to change the prescaler value
+    //WDTCSR = ((1<<WDIE)|(1<<WDP3)|(1<<WDP0));       // ~8s we active the interruption of the watchdog timer
+    WDTCSR = ((1<<WDIE)|(1<<WDP2)|(1<<WDP1));       // ~1s we active the interruption of the watchdog timer                       
+    asm volatile ("wdr");                           // to start from a zero counter value
+  }
+  
+  FlagsReader = Flags;
+  FlagsReader &= (1<<StopTheWatchdogTimer);     // flag activated after the initialization of the GPRS and to stop the WDT
+  if (FlagsReader != 0) {
+    Flags &= ~(1<<StopTheWatchdogTimer);
+    WatchdogCounter = 0;
+    MCUSR &= ~(1<<WDRF);                        // WDRF is cleared (MCUSR &= ~(1<<WDRF); ou MCUSR = 0;)
+    WDTCSR |= (1<<WDCE);                        // to change the bits as WDE bit and prescaler bits
+    WDTCSR = 0x0;
+  }
 }
 // Compteur 4 programmé pour des temporisations de 100 ms
 ISR(TIMER4_COMPA_vect) {
@@ -85,6 +110,18 @@ ISR(TIMER4_COMPA_vect) {
 ISR(TIMER5_COMPA_vect) {
   compt5++;
   cmpt5++;
+}
+// Watchdog timer interruption for the initialization of GPRS and GSM
+ISR(WDT_vect) {
+  WatchdogCounter++;
+  if (WatchdogCounter == BusyTimeForWatchdog) {   // BusyTimeForWatchdog is loaded with a specific value before calling a blocking function
+    MCUSR &= ~(1<<WDRF);
+    WDTCSR |= (1<<WDCE);                          // to change the bits as WDE bit and prescaler bits
+    WDTCSR = 0x0; 
+    asm volatile ("jmp 0");                       // Software reset
+  } else {
+    MCUSR &= ~(1<<WDRF);
+  }
 }
 /* ####################################Fin des interruptions####################################### */
 
@@ -186,27 +223,25 @@ void Init_Timers(uint8_t drapeauxTimers, uint8_t time_Timer0, uint16_t time_Time
 }
 /********************************************************************************************************************************/
 /* Polling function to check the presence of all I2C devices.                                                                   */
+/* Return a complex type as a structure. I2C_ProbesOfRaft is a gloabal variable which inform the presence of each I2C probes.   */
 /********************************************************************************************************************************/
 I2CProbesConnected_t scani2c() {                            // Scan for all I2C devices
   uint8_t Nbr_stamps, add_stamp;
-  ProbesOfInstrument.DO_Probe = false;                      // necessary to reset all devices encountered
-  ProbesOfInstrument.ORP_Probe = false;                     // I2CProbesConnected_t ProbesOfInstrument; (global variable)
-  ProbesOfInstrument.pH_Probe = false;
-  ProbesOfInstrument.EC_Probe = false;
-  ProbesOfInstrument.RTD_Probe = false;
-  ProbesOfInstrument.VEML7700_Probe = false;
+  I2C_ProbesOfRaft.DO_Probe = false;                        // necessary to reset all devices encountered
+  I2C_ProbesOfRaft.ORP_Probe = false;                       // I2CProbesConnected_t I2C_ProbesOfRaft; (global variable)
+  I2C_ProbesOfRaft.pH_Probe = false;
+  I2C_ProbesOfRaft.EC_Probe = false;
+  I2C_ProbesOfRaft.RTD_Probe = false;
+  I2C_ProbesOfRaft.VEML7700_Probe = false;
   Serial.println(F("Starting  I2C scan..."));
   Nbr_stamps = 0;
   for (add_stamp = 1; add_stamp < 128; add_stamp++) {
-    if (check_i2c_connection(add_stamp) == 0) {             // if I2C device is present
+    if (check_i2c_connection(add_stamp) == 0) {             // if I2C device is present (twi.cpp) (the only function called)
       Nbr_stamps++;
-      Serial.print(F("I2C CHANNEL 0x"));                    // store string in flash memory
+      Serial.print(F("\t\t\t\t\uFFED I2C Channel: 0x"));    // store string in flash memory
       Serial.println(add_stamp, HEX);
-      Serial.print(F("Atlas Scientific device: "));
-      while (*ptr_StampType != '\0') {                      // pointer sended by parseInfo function
-        Serial.print(*(ptr_StampType++));
-      }
-      Serial.println();
+      Serial.print(F("\t\t\t\t\uFFED Atlas Scientific device: "));
+      DisplayArrayContentFunctions(ptr_StampType, true);    // ptr_StampType = global pointer sended by parseInfo function
     }
   }
   Divider(80, true, '-');
@@ -214,23 +249,24 @@ I2CProbesConnected_t scani2c() {                            // Scan for all I2C 
   Serial.print(F("Discovered I2C peripherals: "));
   Serial.println(Nbr_stamps, DEC);
   Divider(80, true, '-');
-  return ProbesOfInstrument;                                // global variable
+  return I2C_ProbesOfRaft;                                  // global variable
 }
 /********************************************************************************************************************************/
-/* All I2C devices have to be found and identified using the name of the probe.                                                 */ 
+/* All I2C devices have to be found and identified using the name of the probe.                                                 */
+/* MyI2CDevice is an object of the Wire class.                                                                                  */
 /********************************************************************************************************************************/
 uint8_t check_i2c_connection(uint8_t add_i2c) {     // check selected i2c channel/address. verify that it's working by requesting info about the stamp
   uint8_t status_transmit;
-  String AtlasCde;
+  String AtlasCde;                                  // short command
   AtlasCde.reserve(4);
   MyI2CDevice.beginTransmission(add_i2c);           // START followed by a STOP : https://www.arduino.cc/en/Reference/WireBeginTransmission initie une transmission I2C avec l'adresse spécifiée
   status_transmit = MyI2CDevice.endTransmission();  // Bytes sended after test are 0 for success, 1-4 for errors https://www.arduino.cc/en/Reference/WireEndTransmission
-  if (status_transmit == 0) {                       // if success
+  if (status_transmit == 0) {                       // if success => uint8_t twi_writeTo(uint8_t address, uint8_t *data, uint8_t length, uint8_t wait, uint8_t sendStop) {...}
     AtlasCde = Cmd_I;                                         // 'I'
-    memset(StampCmd, Null, sizeof(StampCmd));                 // char StampCmd[20];
+    memset(StampCmd, Null, sizeof(StampCmd));                 // char StampCmd[32];
     AtlasCde.toCharArray(StampCmd, AtlasCde.length() + 1);    // mandatory increase of one character filled with '\0'
     Divider(80, true, '-');
-    Serial.println(F("\n**Informations read from the stamp**"));
+    Serial.println(F("\n** Informations read from the stamp **"));
     I2C_call(StampCmd, (I2CAddresses_t)add_i2c, AtlasCde.length());   // sends a control command and retrieve a data frame stored in StampCmd array
     ptr_StampType = parseInfo((I2CAddresses_t)add_i2c);               // sortie de la méthode au premier return rencontré (on identifie les adresses I2C de chaque module)
   }
@@ -249,37 +285,41 @@ void I2C_call(char *Cde_busI2C, I2CAddresses_t ADDRESS, uint8_t nbr_carCde) {   
   uint8_t NbrBytes;                 // We need to know how many characters bytes have been received
   uint8_t byteIndex = 0;
 
-  memset(sensordata, Null, sizeof(sensordata));           // clear sensordata array
+  memset(sensordata, Null, sizeof(sensordata));           // clear sensordata array which is global [32]
   MyI2CDevice.beginTransmission((uint8_t)ADDRESS);        // call the circuit by its ID number : void TwoWire::beginTransmission(uint8_t address) https://www.arduino.cc/en/Reference/WireBeginTransmission
-  MyI2CDevice.write(Cde_busI2C, nbr_carCde);              // virtual size_t write(const uint8_t *, size_t);
+  MyI2CDevice.write(Cde_busI2C, nbr_carCde);              // virtual size_t write(const uint8_t *, size_t); => here is the real transmission of a control command to the Atlas Scietific stamp
   MyI2CDevice.endTransmission();
   #ifdef messagesON
-    Serial.print(F("Control command transmitted to the stamp: ")); 
+    Serial.print(F("Control command transmitted to the stamp: "));
     for (k = 0; k < nbr_carCde; k++) Serial.print(*(Cde_busI2C++));
   #endif
   Serial.print(F("\n[DEVICE] Control command state: answer pending"));
   NbrBytes = MyI2CDevice.requestFrom((uint8_t)ADDRESS, (uint8_t)20, (uint8_t)1);    // return uint8_t requestFrom((uint8_t)address, (uint8_t)quantity, (uint8_t)sendStop);
   i2c_response_code = MyI2CDevice.read();                 // first byte read
-  sensordata[byteIndex++] = i2c_response_code;
+  sensordata[byteIndex++] = i2c_response_code;            // global array [32]
+  Flags |= (1<<WatchdogDelayArmed);
+  BusyTimeForWatchdog = BusyTimeForProbes;
   
   if (i2c_response_code == 254) {                         // means the command has not yet been finished calculating
     do {
-      cmpt_5ms = 0;
-      do { } while(cmpt_5ms < 10);
+      cmpt_5ms = 0;                                       // Timer1
+      do { } while(cmpt_5ms < 10);                        // time delay of 50 ms for each point character displayed
       Serial.print('.');
       byteIndex = 0;
       NbrBytes = MyI2CDevice.requestFrom((uint8_t)ADDRESS, (uint8_t)20, (uint8_t)1);
       i2c_response_code = MyI2CDevice.read();
       sensordata[byteIndex++] = i2c_response_code;
       if (i2c_response_code != 254) {
+        Flags |= (1<<StopTheWatchdogTimer);
         while (MyI2CDevice.available()) {                 // return rxBufferLength - rxBufferIndex;
-          sensordata[byteIndex++] = MyI2CDevice.read();
+          sensordata[byteIndex++] = MyI2CDevice.read();   // The answer is acquired here
         }
         sensordata[byteIndex] = Null;
-        break;
+        break;                                            // Outgoing method from the do while loop
       }
     } while(i2c_response_code == 254);
   } else {
+    Flags |= (1<<StopTheWatchdogTimer);
     while (MyI2CDevice.available()) {                     // return rxBufferLength - rxBufferIndex;
       sensordata[byteIndex++] = MyI2CDevice.read();
     }
@@ -308,6 +348,7 @@ void I2C_call(char *Cde_busI2C, I2CAddresses_t ADDRESS, uint8_t nbr_carCde) {   
 }
 /**********************************************************************************************************************************/
 /* To display the correct ASCII characters on terminal. We have to change only the first character of the frame.                  */
+/* The character chain use the principle of a pointer conversion to get a String. Used only one time.                             */
 /**********************************************************************************************************************************/
 void DisplayFrameFromStamp(char *ptr_frame) {
   String MyFrame;
@@ -322,73 +363,70 @@ void DisplayFrameFromStamp(char *ptr_frame) {
 /* All responses begin with the decimal value of 1 when device have done an answer.                                               */
 /* PH EZO  . "1?I,pH,1.1" or "1?i,pH,1.0"                                                                                         */
 /* ORP EZO . "1?I,ORP,1.0"                                                                                                        */
-/* DO EZO  . "1?I,D.O.,1.0" || "1?I,DO,1.7" (. exists in D.O. and DO form)                                                        */
+/* DO EZO  . "1?I,D.O.,1.1" || "1?I,DO,1.7" (. exists in D.O. and DO form)                                                        */
 /* EC EZO  . "1?I,EC,1.0"                                                                                                         */
 /* RTD EZO . "1?I,RTD,1.2" or "1?i,RTD,2.01"                                                                                      */
-/* This function returns a char pointer which represents the type of the probe.                                                    */
+/* This function returns a char pointer which represents the type of the probe. She is called only for the 'i' command allowing   */
+/* to get informations from the module as the firmware version.                                                                   */
 /**********************************************************************************************************************************/
 char *parseInfo(I2CAddresses_t StampAddress) {    // parses the answer to an 'i' or 'I' command. returns true if answer was parseable, false if not.
   uint8_t m;
   char *ptr_char;
+  //char  stamp_version[5];           // hold the version of the stamp (only used in this function)
   String Answer;
   Answer.reserve(32);               // same dimension as sensordata[]
   String stamp_type;                // hold the name / type of the stamp
-  stamp_type.reserve(16);           // reserve string buffer to save some SRAM only here
-  memset(stamp_version, Null, sizeof(stamp_version));         // void *memset(void *str, int c, size_t n)
-  ptr_char = sensordata;            // sensordata contains the response of the probe following a command Cmd_I ('I')
+  stamp_type.reserve(18);           // reserve string buffer to save some SRAM only here
+  //memset(stamp_version, Null, sizeof(stamp_version));         
+  ptr_char = &sensordata[0];        // sensordata is a global array and contains the response of the probe following a command Cmd_I ('I') for this function
   Answer = String(ptr_char);
   switch (StampAddress) {
     case DissolvedOxygen_Add:
       stamp_type = F("EZO DO");
-      Answer = Answer.substring(9);               // "1?I,D.O.,1.0"
-      ProbesOfInstrument.DO_Probe = true;         // I2CProbesConnected_t ProbesOfInstrument; (global variable)
+      Answer = Answer.substring(7);               // "1?I,DO,2.14"
+      I2C_ProbesOfRaft.DO_Probe = true;           // I2CProbesConnected_t I2C_ProbesOfRaft; (global variable)
       break;
     case ORP_Add:
       stamp_type = F("EZO ORP");
       Answer = Answer.substring(8);               // "1?I,ORP,1.0"
-      ProbesOfInstrument.ORP_Probe = true;
+      I2C_ProbesOfRaft.ORP_Probe = true;
       break;
     case pH_Add:
       stamp_type = F("EZO pH");
       Answer = Answer.substring(7);               // "1?i,pH,1.98"
-      ProbesOfInstrument.pH_Probe = true;
+      I2C_ProbesOfRaft.pH_Probe = true;
       break;
     case Conductivity_Add:
       stamp_type = F("EZO EC");
       Answer = Answer.substring(7);               // "1?i,EC,2.10"
-      ProbesOfInstrument.EC_Probe = true;
+      I2C_ProbesOfRaft.EC_Probe = true;
       break;
     case RTD_Add:
       stamp_type = F("EZO RTD");
       Answer = Answer.substring(8);               // "1?i,RTD,2.01"
-      ProbesOfInstrument.RTD_Probe = true;
+      I2C_ProbesOfRaft.RTD_Probe = true;
       break;
     case VEML7700_Add:
       stamp_type = F("ALS VEML7700");
       Answer = "?.??";
-      ProbesOfInstrument.VEML7700_Probe = true;
+      I2C_ProbesOfRaft.VEML7700_Probe = true;
       break;
     default:
       stamp_type = F("unknown EZO stamp");
       Answer = "?.??";
       break;
   }
-  Answer.toCharArray(stamp_version, Answer.length() + 1);
-  m = 0;
-  Serial.print(F("Firmware: "));
-  do {
-    Serial.print(stamp_version[m++]);
-  } while(stamp_version[m] != Null);
-  Serial.println();
-  stamp_type.toCharArray(ConvStringAsArray, stamp_type.length() + 1);
-  return &ConvStringAsArray[0];       // pointer to allow conversion to String declarations
+  Serial.print(F("\t\t\t\t\uFFED Firmware: "));
+  Serial.println(Answer);
+  stamp_type.toCharArray(ConvStringAsArray, stamp_type.length() + 1);   // global array ConvStringAsArray[32]
+  return &ConvStringAsArray[0];                                         // pointer to allow conversion to String declarations
 }
 /**********************************************************************************************************************************/
 /*                                                        HELP FUNCTION                                                           */
 /**********************************************************************************************************************************/
 void help(String Cde_received) {
   Cde_received = Cde_received.substring(4);               // to remove the text "help"
-  memset(TabASCII, Null, sizeof(TabASCII));
+  memset(TabASCII, Null, sizeof(TabASCII));               // void *memset(void *str, int c, size_t n)
   Cde_received.toCharArray(TabASCII, Cde_received.length() + 1);
   if (TabASCII[0] == '\0') {
     Divider(140, true, '=');
@@ -436,7 +474,7 @@ void help(String Cde_received) {
 /**********************************************************************************************************************************/
 uint16_t detect_entier(char *ptr_mess, String Cde) {
   uint8_t h = 0;
-  memset(TabASCII, Null, sizeof(TabASCII));
+  memset(TabASCII, Null, sizeof(TabASCII));           // void *memset(void *str, int c, size_t n)
   ptr_mess += Cde.length() * sizeof(char);              // to point the first digit after the command's name
   do {
     TabASCII[h++] = *(ptr_mess++);                      // we retrieve all the digit
@@ -452,7 +490,7 @@ boolean detect_float(char *ptr_mess) {
   uint8_t k = 0;
   uint8_t NbrChar;
   float MyFloat;
-  memset(TabASCII, Null, sizeof(TabASCII));
+  memset(TabASCII, Null, sizeof(TabASCII));                       // void *memset(void *str, int c, size_t n)
   NbrChar = GetNbrOfChar(ptr_mess);
   for (k = 0; k < NbrChar; k++) {
     if (isDigit(*ptr_mess) || (uint8_t)*ptr_mess == 0x2E) {       // ASCII char '.' = 0x2E
@@ -667,23 +705,23 @@ float AtlasProbesMeasure(I2CAddresses_t AtlasDeviceAddress) {   // enum
   I2C_call(StampCmd, AtlasDeviceAddress, Length);
   switch (AtlasDeviceAddress) {
     case DissolvedOxygen_Add:
-      if (ProbesOfInstrument.DO_Probe == true) I2C_call(StampCmd, AtlasDeviceAddress, Length);
+      if (I2C_ProbesOfRaft.DO_Probe == true) I2C_call(StampCmd, AtlasDeviceAddress, Length);
       else return 0.0;
       break;
     case ORP_Add:
-      if (ProbesOfInstrument.ORP_Probe == true) I2C_call(StampCmd, AtlasDeviceAddress, Length);
+      if (I2C_ProbesOfRaft.ORP_Probe == true) I2C_call(StampCmd, AtlasDeviceAddress, Length);
       else return 0.0;
       break;
     case pH_Add:
-      if (ProbesOfInstrument.pH_Probe == true) I2C_call(StampCmd, AtlasDeviceAddress, Length);
+      if (I2C_ProbesOfRaft.pH_Probe == true) I2C_call(StampCmd, AtlasDeviceAddress, Length);
       else return 0.0;
       break;
     case Conductivity_Add:
-      if (ProbesOfInstrument.EC_Probe == true) I2C_call(StampCmd, AtlasDeviceAddress, Length);
+      if (I2C_ProbesOfRaft.EC_Probe == true) I2C_call(StampCmd, AtlasDeviceAddress, Length);
       else return 0.0;
       break;
     case RTD_Add:
-      if (ProbesOfInstrument.RTD_Probe == true) I2C_call(StampCmd, AtlasDeviceAddress, Length);
+      if (I2C_ProbesOfRaft.RTD_Probe == true) I2C_call(StampCmd, AtlasDeviceAddress, Length);
       else return 0.0;
       break;
   }
@@ -740,7 +778,7 @@ void change_add_I2C(String Cde_received) {
   Serial.print(F(" (")); Serial.print(New_Add_I2C, HEX); Serial.print(F(")\n"));
 
   if (New_Add_I2C >= 1 and New_Add_I2C <= 127) {
-    memset(TabASCII, Null, sizeof(TabASCII));
+    memset(TabASCII, Null, sizeof(TabASCII));     // void *memset(void *str, int c, size_t n)
     LocalCde = Chg_add_i2c;                                   // "I2C,"
     NbrCdeChar = LocalCde.length();
     LocalCde.toCharArray(TabASCII, NbrCdeChar + 1);           // to associate the additional character '\0'
@@ -877,7 +915,7 @@ void CompensatedTemp_pH_DO(String Cde_received) {           // if the operator w
   Serial.println(F("Is it the probe you want to define the compensation temperature Y/N (y/n):"));
   FillMyAnswerArray();        // answer retrieve from the terminal
   if (MyAnswer[0] == 'y' || MyAnswer[0] == 'Y') {
-    if (ProbeTempPresent == true && Cde_received == "") {     // the value of the temperature from the DS18B20 probe is priority but we can send other values
+    if (DS18B20IsPresent == true && Cde_received == "") {     // the value of the temperature from the DS18B20 probe is priority but we can send other values
       TempMes = MeasureTemp();
       memset(TabASCII, Null, sizeof(TabASCII));
       memset(StampCmd, Null, sizeof(StampCmd));               // command sended to the stamp
@@ -889,7 +927,7 @@ void CompensatedTemp_pH_DO(String Cde_received) {           // if the operator w
         StampCmd[LocalCde.length() + k] = TabASCII[k];
       } while (TabASCII[k++] != Null);
       CdeLength = LocalCde.length() + k;
-    } else if (ProbeTempPresent == false && Cde_received == "") {
+    } else if (DS18B20IsPresent == false && Cde_received == "") {
       Serial.println(F("The temperature probe is not present"));
       Serial.println(F("You need to transmit a temperature value using this format 'comp'<DD.D>"));
       return;     // without the call of the I2C control function
@@ -1031,7 +1069,7 @@ void Calibration(String Cde_received) {
               CdeLength = DisplayAsciiArray(&StampCmd[0]);                // here CdeLength = NbrChar
               I2C_call(&StampCmd[0], TokenAddressInProgress, CdeLength);  // TokenAddressInProgress update by ShowFocus() call
               Serial.println(F("[DEVICE] The control command has been sended"));
-              MyFloat = pHMeasure(ProbesOfInstrument.pH_Probe);
+              MyFloat = pHMeasure(I2C_ProbesOfRaft.pH_Probe);
               Serial.print(F("[DEVICE] Checking pH measure: "));
               Serial.println(MyFloat);
             } else return;
@@ -1271,6 +1309,9 @@ void DisplayNbrCalPoints(String Cde_received) {
 }
 /**********************************************************************************************************************************/
 /* Function to initiate the I2C bus which is an object called Wire.                                                               */
+/* MyI2CDevice is declared using a compilation directive #define MyI2CDevice Wire in this module.                                 */
+/* ProbeSelected is an enumeration which select one probe among several when a measure is asked on the shared I2C bus.            */
+/* Also TokenAddressInProgress content the I2C address in progress.                                                               */
 /**********************************************************************************************************************************/
 void initI2C_Devices(void) {
   MyI2CDevice.begin();                        // enable I2C port
@@ -1278,30 +1319,31 @@ void initI2C_Devices(void) {
   TokenAddressInProgress = NoI2C_Add;         // I2CAddresses_t TokenAddressInProgress;
 }
 /**********************************************************************************************************************************/
-/* Function to identify the address of the DS18B20 probe connected on the board using pin 10.                                     */
-/* This function is a mandatory call to inform the global variable ProbeTempPresent of this module. This variable is shared by a  */
-/* lot of functions.                                                                                                              */
+/* Function to identify the address of the DS18B20 probe connected on the board using pin DS18B20Temp.                            */
+/* This function is a mandatory call to inform the global variable DS18B20IsPresent of this module. This variable is shared by    */
+/* many functions.                                                                                                                */
 /**********************************************************************************************************************************/
 boolean DallasTemperatureSearch(void) {
   uint8_t ADCresolution;
   DS18B20Probe.begin();             // Start up the library and check the presence of Probe on connection 10
-  cmpt1 = 0;                        // timer of 5 ms
-  do {
-  } while(cmpt1 < 100);
-  if (DS18B20Probe.getAddress(&OneWireAddress[0], 0) == true) {
-    ProbeTempPresent = true;        // global variable 
+  cmpt_5ms = 0;                     // timer of 5 ms
+  do { } while(cmpt_5ms < 100);     // warmup of 500 ms
+  if (DS18B20Probe.getAddress(&OneWireAddress[0], 0) == true) {       // OneWireAddress[] is a global array
+    DS18B20IsPresent = true;        // global variable 
     ADCresolution = DS18B20Probe.getResolution(&OneWireAddress[0]);
     if (ADCresolution != 12) DS18B20Probe.setResolution(12);          // forces the 12 bits resolution
-    Divider(80, true, '_');
+    Serial.println();
+    Divider(80, true, '-');
     Serial.println(F("Probe DS18B20 is present."));
     AfficheAdresseCapteur();
   } else {
+    Serial.println();
     Divider(80, true, '-');
-    ProbeTempPresent = false;
+    DS18B20IsPresent = false;
     Serial.println(F("\nTemperature probe DS18B20 is not connected or is faulty"));
   }
   Divider(80, true, '-');
-  return ProbeTempPresent;
+  return DS18B20IsPresent;
 }
 /****************************************************************************************************/
 /* Function which displays the content of the unidimensional array of the selected address probe.   */
@@ -1327,19 +1369,22 @@ void AfficheAdresseCapteur(void) {
 void Divider(uint8_t nbr_carac, boolean CRLFChar, char caract) {
   uint8_t i;
   for (i = 0; i < nbr_carac; i++) Serial.print(caract);
-  if (CRLFChar == true) Serial.println();
+  //if (CRLFChar == true) Serial.println();
 }
 /**********************************************************************************************************************************/
 /* Function to read the temperature of only one probe.                                                                            */
-/* This module is informed of the probe presence with ProbeTempPresent when subroutine DallasTemperatureSearch() is called.       */
+/* This module is informed of the probe presence with DS18B20IsPresent when subroutine DallasTemperatureSearch() is called.       */
 /**********************************************************************************************************************************/
 float MeasureTemp(void) {
   float result;
-  if (ProbeTempPresent == true) {
+  Flags |= (1<<WatchdogDelayArmed);
+  BusyTimeForWatchdog = BusyTimeForDS18B20;
+  if (DS18B20IsPresent == true) {
     if (DS18B20Probe.requestTemperaturesByAddress(&OneWireAddress[0]) == true) {
       result = DS18B20Probe.getTempC(&OneWireAddress[0]);
     }
   } else return 0.0;
+  Flags |= (1<<StopTheWatchdogTimer);
   return result;
 }
 /********************************************************************************************************/
@@ -1497,14 +1542,13 @@ SamplingDelay_t SamplingDelayMeasure(String Cde_received, SamplingDelay_t LocalD
   uint8_t NbrChar;
   uint16_t localResult;
   char *lcl_ptr;
-  //Serial.print(F("Command: ")); Serial.println(Cde_received);
   Cde_received = Cde_received.substring(6);               // string reduction to remove "repeat"
   memset(TabASCII, Null, sizeof(TabASCII));
   Cde_received.toCharArray(TabASCII, Cde_received.length() + 1);
   lcl_ptr = &TabASCII[0];
   memset(Uint16DecAscii, Null, sizeof(Uint16DecAscii));
   
-  if (isAlpha(TabASCII[0]) == true) {
+  if (isAlpha(TabASCII[0]) == true) {                     // question mark '?' is not an alphabetical character ("repeat?")
     if (Cde_received.equals("zero")) {
       LocalDelay.RepeatedMeasures = false;
       LocalDelay.NbrSeconds = 0;
@@ -1513,7 +1557,7 @@ SamplingDelay_t SamplingDelayMeasure(String Cde_received, SamplingDelay_t LocalD
       Serial.println(F("The measure sampling has been ended."));
     }
   } else if (isDigit(TabASCII[0]) == true) {
-    NbrChar = GetNbrOfChar(&TabASCII[0]);
+    NbrChar = GetNbrOfChar(&TabASCII[0]);                                     // define the number of occupied cells  
     if (TabASCII[NbrChar - 1] == 's') {                                       // the last character
       for (k = 0; k < (NbrChar - 1); k++) Uint16DecAscii[k] = *(lcl_ptr++);   // before the 's' character
       localResult = Convert_DecASCII_to_uint16(&Uint16DecAscii[0]);
@@ -1532,7 +1576,7 @@ SamplingDelay_t SamplingDelayMeasure(String Cde_received, SamplingDelay_t LocalD
     } else if (TabASCII[NbrChar - 1] == 'm') {                                       // the last character
       for (k = 0; k < (NbrChar - 1); k++) Uint16DecAscii[k] = *(lcl_ptr++);   // before the 'm' character
       localResult = Convert_DecASCII_to_uint16(&Uint16DecAscii[0]);
-      Serial.print(F("localResult = ")); Serial.println(localResult, DEC);
+      //Serial.print(F("localResult = ")); Serial.println(localResult, DEC);
       if (localResult > 1000) {
         Serial.println(F("[Error] The delay in minutes can not be upper than 1000..."));
         Serial.println(F("[WARNING] The sampling delay in minutes has not be changed..."));
@@ -1565,7 +1609,8 @@ SamplingDelay_t SamplingDelayMeasure(String Cde_received, SamplingDelay_t LocalD
       Serial.println(LocalDelay.NbrMinutes, DEC);
       Serial.print(F("Repeated measures is: "));
       if (LocalDelay.RepeatedMeasures == true) Serial.println(F("ON"));
-      if (LocalDelay.RepeatedMeasures == false) Serial.println(F("OFF"));
+      else Serial.println(F("OFF"));
+      Divider(140, true, '-');
       //return LocalDelay;                        // the one which has been tansmitted as parameter
   }
   return LocalDelay;
@@ -1575,14 +1620,14 @@ SamplingDelay_t SamplingDelayMeasure(String Cde_received, SamplingDelay_t LocalD
 /* of each commands. In the text of the command we can use question mark '?' symbol to list commands content as 'meas?'           */
 /* measall => send all measures from the avaliable sensors of the probe.                                                          */
 /* The return type is a structure which contains all the measure from the available probes connected.                             */
-/* ProbeTempPresent is a global variable which has been called when the DS18B20 is intialized
+/* DS18B20IsPresent is a global boolean variable which has been called when the DS18B20 is initialized.                           */
 /**********************************************************************************************************************************/
 ProbeMeasures_t Reading_probes(String Cde_received) {
-  ProbeMeasures_t MyMeasures;
+  ProbeMeasures_t MyMeasures;       // contains all measures using float format for all buses
   char *lcl_ptr;
   String Answer;
   Answer.reserve(6);
-  //InventoryProbes(ProbesOfInstrument, ProbeTempPresent);
+  //InventoryProbes(I2C_ProbesOfRaft, DS18B20IsPresent);
   memset(TabASCII, Null, sizeof(TabASCII));
   Cde_received = Cde_received.substring(4);               // string reduction to remove "meas"
   Cde_received.toCharArray(TabASCII, Cde_received.length() + 1);
@@ -1602,13 +1647,26 @@ ProbeMeasures_t Reading_probes(String Cde_received) {
     Serial.println(F("[WARNING] The command to get all measures and to store them from all available sensors is 'measall'"));
     Divider(140, true, '-');
   } else if (Answer.equals("all")) {
-    if (ProbesOfInstrument.pH_Probe == true) MyMeasures.pH_FloatValue = pHMeasure(ProbesOfInstrument.pH_Probe);            // ProbeMeasures_t MyMeasures; (Global variable)
-    if (ProbesOfInstrument.DO_Probe == true) MyMeasures.DO_FloatValue = OxyMeasure(ProbesOfInstrument.DO_Probe);           // I2CProbesConnected_t ProbesOfInstrument; (Global variable)
-    if (ProbesOfInstrument.ORP_Probe == true) MyMeasures.ORP_FloatValue = orpMeasure(ProbesOfInstrument.ORP_Probe);
-    if (ProbesOfInstrument.EC_Probe == true) MyMeasures.EC_FloatValue = ConductivityMeasure(ProbesOfInstrument.EC_Probe);
-    if (ProbeTempPresent == true) MyMeasures.Temp_FloatValue = TempMeasure(ProbeTempPresent);
-    if (ProbesOfInstrument.VEML7700_Probe == true) MyMeasures.Lux_FloatValue = luxmeter(ProbesOfInstrument.VEML7700_Probe);
+    if (I2C_ProbesOfRaft.pH_Probe == true) MyMeasures.pH_FloatValue = pHMeasure(I2C_ProbesOfRaft.pH_Probe);            // ProbeMeasures_t MyMeasures; (Global variable)
+    if (I2C_ProbesOfRaft.DO_Probe == true) MyMeasures.DO_FloatValue = OxyMeasure(I2C_ProbesOfRaft.DO_Probe);           // I2CProbesConnected_t I2C_ProbesOfRaft; (Global variable)
+    if (I2C_ProbesOfRaft.ORP_Probe == true) MyMeasures.ORP_FloatValue = orpMeasure(I2C_ProbesOfRaft.ORP_Probe);
+    if (I2C_ProbesOfRaft.EC_Probe == true) MyMeasures.EC_FloatValue = ConductivityMeasure(I2C_ProbesOfRaft.EC_Probe);
+    if (DS18B20IsPresent == true) MyMeasures.Temp_FloatValue = TempMeasure(DS18B20IsPresent);
+    if (I2C_ProbesOfRaft.VEML7700_Probe == true) MyMeasures.Lux_FloatValue = luxmeter(I2C_ProbesOfRaft.VEML7700_Probe);
   }
+  return MyMeasures;
+}
+/**********************************************************************************************************************************/
+/* Global function to acquire measures from all probes. this function generate random values between boudaries.                   */
+/**********************************************************************************************************************************/
+ProbeMeasures_t RandomValues() {
+  ProbeMeasures_t MyMeasures;       // contains all measures using float format for all buses
+  MyMeasures.pH_FloatValue = (float)((float)(random(5000, 8000)) / 1000);
+  MyMeasures.DO_FloatValue = (float)((float)(random(100, 10000)) / 1000);
+  MyMeasures.ORP_FloatValue = (float)((float)(random(5000, 25000)) / 100);
+  MyMeasures.EC_FloatValue = (float)((float)(random(20000, 1500000)) / 1000);
+  MyMeasures.Temp_FloatValue = (float)((float)(random(1300, 2100)) / 100);
+  MyMeasures.Lux_FloatValue = (float)((float)(random(1200, 80000)) / 100);
   return MyMeasures;
 }
 /**********************************************************************************************************************************/
@@ -1624,25 +1682,28 @@ float orpMeasure(boolean ProbeReady) {
   AtlasCde.reserve(4);
   Answer.reserve(20); 
   if (ProbeReady == true) {
-    AtlasCde = Cmd_Single_Read;                           // 'R'
-    memset(StampCmd, Null, sizeof(StampCmd));             // command sended to the stamp
+    digitalWrite(CdeNmosRFM0505, HIGH);                         // power on DC DC converter
+    AtlasCde = Cmd_Single_Read;                                 // 'R'
+    memset(StampCmd, Null, sizeof(StampCmd));                   // command sended to the stamp
     AtlasCde.toCharArray(StampCmd, AtlasCde.length() + 1);
     Length = AtlasCde.length();
-    I2C_call(StampCmd, ORP_Add, Length);                  // we need to stop outputs on terminal
-    Myptr = sensordata;                                   // datas are stored in sensordata array (global array)
+    Serial.println(F("\t\uFFED Oxidation Reduction Potential sensor"));
+    I2C_call(StampCmd, ORP_Add, Length);                        // we need to stop outputs on terminal
+    Myptr = sensordata;                                         // datas are stored in sensordata array (global array)
     if (sensordata[0] == '1') {
       Answer = String(Myptr);
-      Answer = Answer.substring(1);
-      Answer.toCharArray(TabASCII, Answer.length() + 1);
+      Answer = Answer.substring(1);                             // to get only the ASCII float value
+      Answer.toCharArray(TabASCII, Answer.length() + 1);        // global array [20]
       MyMeasure = atof(TabASCII);
     }
+    SleepMode(ORP_Add);
     #ifdef messagesON
-      Serial.println();
-      Serial.print(F("\t\tOxydo-reduction potential measure: ")); 
+      Serial.print(F("\n\n\t\t\u2714 Oxidation-Reduction Potential measured: ")); 
       Serial.print(MyMeasure);
       Serial.println(F(" mV"));
       Divider(80, true, '*');
     #endif
+    digitalWrite(CdeNmosRFM0505, LOW);                          // switch off DC DC converter
   }
   return MyMeasure;
 }
@@ -1659,25 +1720,28 @@ float ConductivityMeasure(boolean ProbeReady) {
   AtlasCde.reserve(4);
   Answer.reserve(20);
   if (ProbeReady == true) {
-    AtlasCde = Cmd_Single_Read;                           // 'R'
-    memset(StampCmd, Null, sizeof(StampCmd));             // command sended to the stamp
+    digitalWrite(CdeNmosRFM0505, HIGH);                         // power on DC DC converter
+    AtlasCde = Cmd_Single_Read;                                 // 'R'
+    memset(StampCmd, Null, sizeof(StampCmd));                   // command sended to the stamp
     AtlasCde.toCharArray(StampCmd, AtlasCde.length() + 1);
     Length = AtlasCde.length();
+    Serial.println(F("\t\uFFED Conductivity sensor"));
     I2C_call(StampCmd, Conductivity_Add, Length);
-    Myptr = sensordata;                                   // datas are stored in sensordata array
+    Myptr = sensordata;                                         // datas are stored in sensordata array
     if (sensordata[0] == '1') {
       Answer = String(Myptr);
       Answer = Answer.substring(1);
       Answer.toCharArray(TabASCII, Answer.length() + 1);
       MyMeasure = atof(TabASCII);
     }
+    SleepMode(Conductivity_Add);
     #ifdef messagesON
-      Serial.println();
-      Serial.print(F("\t\tConductivity measure: ")); 
+      Serial.print(F("\n\n\t\t\u2714 Conductivity measured: "));
       Serial.print(MyMeasure);
       Serial.println(F(" µS"));
       Divider(80, true, '*');
     #endif
+    digitalWrite(CdeNmosRFM0505, LOW);                          // switch off DC DC converter
   }
   return MyMeasure;
 }
@@ -1694,24 +1758,27 @@ float pHMeasure(boolean ProbeReady) {
   AtlasCde.reserve(4);
   Answer.reserve(20);
   if (ProbeReady == true) {
+    digitalWrite(CdeNmosRFM0505, HIGH);                         // power on DC DC converter
     AtlasCde = Cmd_Single_Read;                                 // 'R'
     memset(StampCmd, Null, sizeof(StampCmd));                   // command sended to the stamp
     AtlasCde.toCharArray(StampCmd, AtlasCde.length() + 1);
     Length = AtlasCde.length();
+    Serial.println(F("\t\uFFED pH sensor"));
     I2C_call(StampCmd, pH_Add, Length);
-    Myptr = sensordata;                                   // datas are stored in sensordata array
+    Myptr = sensordata;                                         // datas are stored in sensordata array
     if (sensordata[0] == '1') {
       Answer = String(Myptr);
       Answer = Answer.substring(1);
       Answer.toCharArray(TabASCII, Answer.length() + 1);
       MyMeasure = atof(TabASCII);
     }
+    SleepMode(pH_Add);
     #ifdef messagesON
-      Serial.println();
-      Serial.print(F("\t\tpH measure: ")); 
+      Serial.print(F("\n\n\t\t\u2714 pH measured: "));
       Serial.println(MyMeasure);
       Divider(80, true, '*');
     #endif
+    digitalWrite(CdeNmosRFM0505, LOW);                          // switch off DC DC converter
   }
   return MyMeasure;
 }
@@ -1728,10 +1795,12 @@ float OxyMeasure(boolean ProbeReady) {
   AtlasCde.reserve(4);
   Answer.reserve(20);
   if (ProbeReady == true) {
+    digitalWrite(CdeNmosRFM0505, HIGH);                         // power on DC DC converter
     AtlasCde = Cmd_Single_Read;                                 // 'R'
     memset(StampCmd, Null, sizeof(StampCmd));                   // command sended to the stamp
     AtlasCde.toCharArray(StampCmd, AtlasCde.length() + 1);
     Length = AtlasCde.length();
+    Serial.println(F("\t\uFFED Dissolved Oxygen sensor"));
     I2C_call(StampCmd, DissolvedOxygen_Add, Length);
     Myptr = sensordata;                                   // datas are stored in sensordata array
     if (sensordata[0] == '1') {
@@ -1740,13 +1809,14 @@ float OxyMeasure(boolean ProbeReady) {
       Answer.toCharArray(TabASCII, Answer.length() + 1);
       MyMeasure = atof(TabASCII);
     }
+    SleepMode(DissolvedOxygen_Add);
     #ifdef messagesON
-      Serial.println();
-      Serial.print(F("\t\tOxygen measure: ")); 
+      Serial.print(F("\n\n\t\t\u2714 Dissolved-oxygen measured: "));
       Serial.print(MyMeasure);
       Serial.println(F(" mg/l"));
       Divider(80, true, '*');
     #endif
+    digitalWrite(CdeNmosRFM0505, LOW);                          // switch off DC DC converter
   }
   return MyMeasure;
 }
@@ -1760,8 +1830,8 @@ float TempMeasure(boolean ProbeReady) {
   if (ProbeReady == true) {                             // DS18B20
     MyMeasure = MeasureTemp();
     #ifdef messagesON
-      Serial.println(F("DS18B20 sensor\n"));
-      Serial.print(F("\t\tTemperature measure: ")); 
+      Serial.println(F("\t\uFFED DS18B20 sensor"));
+      Serial.print(F("\n\t\t\u2714 Temperature measured: ")); 
       Serial.print(MyMeasure);
       Serial.println(F(" °C"));
       Divider(80, true, '*');
@@ -1814,7 +1884,7 @@ uint8_t Concatenate2Arrays(char *ptr_FirstArray, char *ptr_SecondArray, char *pt
 }
 /**********************************************************************************************************************************/
 /* Function to make an inventory of all connected probes identified by the main program.                                          */
-/* MyProbes is a local variable which can be informed by the global variable ProbesOfInstrument.                                  */
+/* MyProbes is a local variable which can be informed by the global variable I2C_ProbesOfRaft.                                  */
 /**********************************************************************************************************************************/
 void InventoryProbes(I2CProbesConnected_t MyProbes, boolean DS18B20Probe) {
   String LocalCde;
@@ -1844,13 +1914,284 @@ void InventoryProbes(I2CProbesConnected_t MyProbes, boolean DS18B20Probe) {
   else Serial.println(F("[Temperature sensor (OneWire)]\t\t\t => not present or is faulty"));
   Divider(80, true, '*');
 }
-
-
-
-
-
-
-
+/* **************************************************************************************************************************** */
+/* SLEEP command to enter sleep mode and low power.                                                                             */
+/* **************************************************************************************************************************** */
+void SleepMode(I2CAddresses_t ADDRESS) {
+  String AtlasCde;
+  AtlasCde.reserve(6);
+  uint8_t k;
+  char *Cde_busI2C;
+  uint8_t Length;
+  
+  AtlasCde = Cmd_SLEEP;
+  Length = AtlasCde.length();
+  memset(StampCmd, Null, sizeof(StampCmd));             // command sended to the stamp global array [32]
+  AtlasCde.toCharArray(StampCmd, AtlasCde.length() + 1);
+  Cde_busI2C = &StampCmd[0];
+  MyI2CDevice.beginTransmission((uint8_t)ADDRESS);      // call the circuit by its ID number : void TwoWire::beginTransmission(uint8_t address) https://www.arduino.cc/en/Reference/WireBeginTransmission
+  MyI2CDevice.write(Cde_busI2C, Length);                // virtual size_t write(const uint8_t *, size_t); => here is the real transmission of a control command to the Atlas Scietific stamp
+  MyI2CDevice.endTransmission();
+  #ifdef messagesON
+    Serial.print(F("Control command transmitted to the stamp: "));
+    for (k = 0; k < Length; k++) Serial.print(*(Cde_busI2C++));
+  #endif                 
+}
+/* **************************************************************************************************************************** */
+/* Function which increment time every second each time she is called.                                                          */
+/* the returned type is complex to allow the transfer of boolean and integer values.                                            */
+/* **************************************************************************************************************************** */
+ElapsedTime_t IncrementMyGSMtime(ElapsedTime_t MyTime) {
+  MyTime.seconds++;
+  if (MyTime.seconds == 60) {
+    MyTime.seconds = 0;
+    MyTime.minutes++;
+    if (MyTime.minutes == NbrMinutesToResetGSM) {           // #define NbrMinutesToResetGSM 60
+      MyTime.minutes = 0;
+      MyTime.ResetGSM = true;
+    }
+  }
+  return MyTime;
+}
+/********************************************************************************************************/
+/* Function to display the content of an array until it encounters a Null character.                    */
+/********************************************************************************************************/
+void DisplayArrayContentFunctions(char *lclptr, boolean CRLF) {
+  do {
+    Serial.print(*(lclptr++));
+  } while (*lclptr != Null);
+  if (CRLF == true) Serial.println();
+}
+/****************************************************************************************************/  
+/* identification of probes on I2C bus from which instance are declared.                            */
+/* With power supply 5 V: ads1115.setGain(GAIN_ONE);  // 1x gain +/- 4.096V 1 bit = 2mV             */
+/****************************************************************************************************/
+void ADCStart(adsGain_t ADC_Gain) {
+  MyADC.begin(0x48);                  // (ADDR tied to GND)
+  MyADC.setGain(ADC_Gain);            // 2x gain +/- 2.048 Volts LSB = 62,5 µV
+  MyADC.setDataRate(ADS1X15_REG_CONFIG_MODE_SINGLE);
+}
+/**************************************************************************************************************************/
+/* Function to read all the voltage values applied on the ADC.                                                            */
+/* GAIN ONE applied: +/- 4.096 volts as reference voltage                                                                 */
+/* 1) Battery between 3 volts and 4.2 volts, so with gain 1 and resistive bridge of 1/2 (2 x 47k): measure x 2            */
+/* 2) Voltage on MPPToutput is 5 volts, so with gain 1 and resistive bridge of 1/2 (2 x 47k): measure x 2                 */
+/* 3) SolarPanel has a potential which can climb to 18 volts so with gain 1 and resistive bridge of 1/11 (20k + 200k):    */
+/* => measure x 11 to get the true voltage at the terminals of the photovoltaic panel.                                    */
+/* 4) Batteries mounted as 3 elements (3s) provide a max voltage of 12,6 volts so resistive bridge is 1/4:                */
+/* => resistors as 200k and 75k allow to get a divisor by 3.6666. So with this resistive bridge, we can measure a maximum */
+/* volatge of 3.43 volts which is lower than the reference voltage of 4.096V.
+/* 5) A photovoltaic panel with Voc = 21.8 V allows to get a  */
+/* solar panel with Open-Circuit Voltage = from 21.8 to 22.4 volts
+/* Optimum Operating Current (current maximum) and Optmum Operating Voltage (voltage at maximum irradiance
+ */
+/**************************************************************************************************************************/
+Voltages_t AcquireVoltageValues() {
+  Voltages_t MyVoltages;
+  int16_t adc;
+  adc = MyADC.readADC_Differential_0_1();                               // ddp_bat
+  MyVoltages.ddp_bat = MyADC.computeVolts(adc) * 2;
+  Serial.println(F("\t\uFFED ADS1115 analog converter for batteries (Lithium-Ion) and Photovoltaic modules"));
+  Serial.print(F("\n\t\t\u2714 Battery voltage: "));
+  Serial.print(MyVoltages.ddp_bat); Serial.println(F(" volts"));
+  adc = MyADC.readADC_Differential_2_3();                               // SolarPanel
+  MyVoltages.ddp_panel = MyADC.computeVolts(adc) * 11;
+  Serial.print(F("\n\t\t\u2714 Solar panel voltage: "));
+  Serial.print(MyVoltages.ddp_panel); Serial.println(F(" volts"));
+  return MyVoltages;
+}
+/********************************************************************************************************/
+/* Function to configure the direction and the default state of each GPIO used for control all the Load */
+/* Switches. By default, all GPIO are configured with high level to power on all devices.               */
+/* MyPowerSwitches is a global variable declared in this module. PowerSwitches_t MyPowerSwitches;       */
+/********************************************************************************************************/
+void GPIOConfigurationAndPowerON() {
+  pinMode(GPIO_pH_Switch, OUTPUT);                  // first the +5 V to power the device
+  digitalWrite(GPIO_pH_Switch, HIGH);
+  pinMode(GPIO_pH_isolator, OUTPUT);
+  digitalWrite(GPIO_pH_isolator, HIGH);
+  MyPowerSwitches.pHProbePowered = true;            // PowerSwitches_t MyPowerSwitches;
+  pinMode(GPIO_ORP_Switch, OUTPUT);                 // first the +5 V to power the device
+  digitalWrite(GPIO_ORP_Switch, HIGH);
+  pinMode(GPIO_ORP_isolator, OUTPUT);
+  digitalWrite(GPIO_ORP_isolator, HIGH);
+  MyPowerSwitches.ORPProbePowered = true;
+  pinMode(GPIO_EC_Switch, OUTPUT);                  // first the +5 V to power the device
+  digitalWrite(GPIO_EC_Switch, HIGH);
+  pinMode(GPIO_EC_isolator, OUTPUT);
+  digitalWrite(GPIO_EC_isolator, HIGH);
+  MyPowerSwitches.ECProbePowered = true;
+  pinMode(GPIO_RTD_Switch, OUTPUT);                 // first the +5 V to power the device
+  digitalWrite(GPIO_RTD_Switch, HIGH);
+  pinMode(GPIO_RTD_isolator, OUTPUT);
+  digitalWrite(GPIO_RTD_isolator, HIGH);
+  MyPowerSwitches.RTDProbePowered = true;
+  pinMode(GPIO_DO_Switch, OUTPUT);                  // first the +5 V to power the device
+  digitalWrite(GPIO_DO_Switch, HIGH);
+  pinMode(GPIO_DO_isolator, OUTPUT);
+  digitalWrite(GPIO_DO_isolator, HIGH);
+  MyPowerSwitches.DOProbePowered = true;
+  pinMode(GPIO_DS18_Switch, OUTPUT);                // first the +5 V to power the device
+  digitalWrite(GPIO_DS18_Switch, HIGH);
+  pinMode(GPIO_DS18_isolator, OUTPUT);
+  digitalWrite(GPIO_DS18_isolator, HIGH);
+  MyPowerSwitches.DS18B20Powered = true;
+  pinMode(GPIO_VEML_Switch, OUTPUT);                // first the +5 V to power the device
+  digitalWrite(GPIO_VEML_Switch, HIGH);
+  pinMode(GPIO_VEML_isolator, OUTPUT);
+  digitalWrite(GPIO_VEML_isolator, HIGH);
+  MyPowerSwitches.VEML7700Powered = true;
+  pinMode(CdeNmosRFM0505, OUTPUT);
+  digitalWrite(CdeNmosRFM0505, LOW);                // to switch off the power supply ISO-VCC from the DC DC converter RFM-0505
+}
+/********************************************************************************************************/
+/* Function to stop power supply for all devices using load switches and the OFF pin of each isolator.  */
+/********************************************************************************************************/
+void IsolatorAndPowerOFF() {
+  digitalWrite(GPIO_pH_Switch, LOW);
+  digitalWrite(GPIO_pH_isolator, LOW);
+  MyPowerSwitches.pHProbePowered = false;
+  digitalWrite(GPIO_ORP_Switch, LOW);
+  digitalWrite(GPIO_ORP_isolator, LOW);
+  MyPowerSwitches.ORPProbePowered = false;
+  digitalWrite(GPIO_EC_Switch, LOW);
+  digitalWrite(GPIO_EC_isolator, LOW);
+  MyPowerSwitches.ECProbePowered = false;
+  digitalWrite(GPIO_RTD_Switch, LOW);
+  digitalWrite(GPIO_RTD_isolator, LOW);
+  MyPowerSwitches.RTDProbePowered = false;
+  digitalWrite(GPIO_DO_Switch, LOW);
+  digitalWrite(GPIO_DO_isolator, LOW);
+  MyPowerSwitches.DOProbePowered = false;
+  digitalWrite(GPIO_DS18_Switch, LOW);
+  digitalWrite(GPIO_DS18_isolator, LOW);
+  MyPowerSwitches.DS18B20Powered = false;
+  digitalWrite(GPIO_VEML_Switch, LOW);
+  digitalWrite(GPIO_VEML_isolator, LOW);
+  MyPowerSwitches.VEML7700Powered = false;
+}
+/********************************************************************************************************/
+/* Function to activate or to inhibit the power supply of each devices using load switch.               */
+/* This function has to modify the global variable which is PowerSwitches_t MyPowerSwitches;            */
+/********************************************************************************************************/
+void PowerSupplyForDevices(PowerSwitches_t LocalSwitches) {  
+  switch (LocalSwitches.TheSelectedDevice) {
+    case AllProbes:
+      if (LocalSwitches.pHProbePowered == true) {
+        digitalWrite(GPIO_pH_Switch, HIGH);                   // power ON
+        digitalWrite(GPIO_pH_isolator, HIGH);                 // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_pH_Switch, LOW);                    // power OFF
+        digitalWrite(GPIO_pH_isolator, LOW);                  // ISO-VCC not applied to EZO circuit        
+      }
+      if (LocalSwitches.ORPProbePowered == true) {
+        digitalWrite(GPIO_ORP_Switch, HIGH);                  // power ON
+        digitalWrite(GPIO_ORP_isolator, HIGH);                // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_ORP_Switch, LOW);                   // power OFF
+        digitalWrite(GPIO_ORP_isolator, LOW);                 // ISO-VCC not applied to EZO circuit        
+      }
+      if (LocalSwitches.ECProbePowered == true) {
+        digitalWrite(GPIO_EC_Switch, HIGH);                   // power ON
+        digitalWrite(GPIO_EC_isolator, HIGH);                 // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_EC_Switch, LOW);                    // power OFF
+        digitalWrite(GPIO_EC_isolator, LOW);                  // ISO-VCC not applied to EZO circuit        
+      }
+      if (LocalSwitches.RTDProbePowered == true) {
+        digitalWrite(GPIO_RTD_Switch, HIGH);                  // power ON
+        digitalWrite(GPIO_RTD_isolator, HIGH);                // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_RTD_Switch, LOW);                   // power OFF
+        digitalWrite(GPIO_RTD_isolator, LOW);                 // ISO-VCC not applied to EZO circuit        
+      }
+      if (LocalSwitches.DOProbePowered == true) {
+        digitalWrite(GPIO_DO_Switch, HIGH);                   // power ON
+        digitalWrite(GPIO_DO_isolator, HIGH);                 // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_DO_Switch, LOW);                    // power OFF
+        digitalWrite(GPIO_DO_isolator, LOW);                  // ISO-VCC not applied to EZO circuit        
+      }
+      if (LocalSwitches.VEML7700Powered == true) {
+        digitalWrite(GPIO_VEML_Switch, HIGH);                 // power ON
+        digitalWrite(GPIO_VEML_isolator, HIGH);               // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_VEML_Switch, LOW);                  // power OFF
+        digitalWrite(GPIO_VEML_isolator, LOW);                // ISO-VCC not applied to EZO circuit        
+      }
+      if (LocalSwitches.DS18B20Powered == true) {
+        digitalWrite(GPIO_DS18_Switch, HIGH);                 // power ON
+        digitalWrite(GPIO_DS18_isolator, HIGH);               // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_DS18_Switch, LOW);                  // power OFF
+        digitalWrite(GPIO_DS18_isolator, LOW);                // ISO-VCC not applied to EZO circuit        
+      }
+      break;
+    case pHProbe:
+      if (LocalSwitches.pHProbePowered == true) {
+        digitalWrite(GPIO_pH_Switch, HIGH);                   // power ON
+        digitalWrite(GPIO_pH_isolator, HIGH);                 // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_pH_Switch, LOW);                    // power OFF
+        digitalWrite(GPIO_pH_isolator, LOW);                  // ISO-VCC not applied to EZO circuit        
+      }
+      break;
+    case ORPProbe:
+      if (LocalSwitches.ORPProbePowered == true) {
+        digitalWrite(GPIO_ORP_Switch, HIGH);                  // power ON
+        digitalWrite(GPIO_ORP_isolator, HIGH);                // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_ORP_Switch, LOW);                   // power OFF
+        digitalWrite(GPIO_ORP_isolator, LOW);                 // ISO-VCC not applied to EZO circuit        
+      }
+      break;
+    case ECProbe:
+      if (LocalSwitches.ECProbePowered == true) {
+        digitalWrite(GPIO_EC_Switch, HIGH);                   // power ON
+        digitalWrite(GPIO_EC_isolator, HIGH);                 // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_EC_Switch, LOW);                    // power OFF
+        digitalWrite(GPIO_EC_isolator, LOW);                  // ISO-VCC not applied to EZO circuit        
+      }
+      break;
+    case RTDProbe:
+      if (LocalSwitches.RTDProbePowered == true) {
+        digitalWrite(GPIO_RTD_Switch, HIGH);                  // power ON
+        digitalWrite(GPIO_RTD_isolator, HIGH);                // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_RTD_Switch, LOW);                   // power OFF
+        digitalWrite(GPIO_RTD_isolator, LOW);                 // ISO-VCC not applied to EZO circuit        
+      }
+      break;
+    case DOProbe:
+      if (LocalSwitches.DOProbePowered == true) {
+        digitalWrite(GPIO_DO_Switch, HIGH);                   // power ON
+        digitalWrite(GPIO_DO_isolator, HIGH);                 // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_DO_Switch, LOW);                    // power OFF
+        digitalWrite(GPIO_DO_isolator, LOW);                  // ISO-VCC not applied to EZO circuit        
+      }
+      break;
+    case VEML7700:
+      if (LocalSwitches.VEML7700Powered == true) {
+        digitalWrite(GPIO_VEML_Switch, HIGH);                 // power ON
+        digitalWrite(GPIO_VEML_isolator, HIGH);               // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_VEML_Switch, LOW);                  // power OFF
+        digitalWrite(GPIO_VEML_isolator, LOW);                // ISO-VCC not applied to EZO circuit        
+      }
+      break;
+    case DS18B20:
+      if (LocalSwitches.DS18B20Powered == true) {
+        digitalWrite(GPIO_DS18_Switch, HIGH);                 // power ON
+        digitalWrite(GPIO_DS18_isolator, HIGH);               // ISO-VCC applied to EZO circuit
+      } else {
+        digitalWrite(GPIO_DS18_Switch, LOW);                  // power OFF
+        digitalWrite(GPIO_DS18_isolator, LOW);                // ISO-VCC not applied to EZO circuit        
+      }
+      break;
+  }
+}
 
 
 

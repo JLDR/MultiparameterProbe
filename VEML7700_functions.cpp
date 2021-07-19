@@ -3,11 +3,15 @@
 
 // Local variables used by this module
 uint16_t                    NbrCounts;                  // luminosity probe VEML7700
-//uint8_t                     VEML_Gain;
-Gain_t                      VEML_Gain;
-IntegrationTime_t           IntegrationTime;
+Gain_t                      VEML_Gain;                  // enumeration which depends from library
+IntegrationTime_t           IntegrationTime;            // enumeration which depends from library
 float                       Measure;
 float                       Lux_VEML, Lux_VEML_Norm, White_VEML, White_VEML_Norm;
+
+/******************************* External variables (Solution to share state from other modules) *******************************/
+extern volatile uint16_t    cmpt1, cmpt2, cmpt3, cmpt4, cmpt5, cmpt_5ms;                  // Timers (also defined in Functions.h)
+extern volatile uint8_t     compt1, compt2, compt3, compt4, compt5, cmpt_100us;           // Timers (also defined in Functions.h)
+extern uint8_t              BusyTimeForWatchdog, Flags;                                   // global variables defined in Functions.h and tied to the timers and the watchdog
 
 /* Class instances which are objects with public methods and private attributes */
 Adafruit_VEML7700 veml = Adafruit_VEML7700();
@@ -19,6 +23,9 @@ Adafruit_VEML7700 veml = Adafruit_VEML7700();
 float luxmeter(boolean ProbeReady) {
   boolean MaxValuesGain_IT = false;         // to detect the maximum values for integration time and gain
   uint8_t k;
+  Flags |= (1<<WatchdogDelayArmed);
+  BusyTimeForWatchdog = BusyTimeForVEML7700;
+  
   NbrCounts = veml.readALS();
   if (ProbeReady == true) {
     do {
@@ -51,14 +58,17 @@ float luxmeter(boolean ProbeReady) {
     if (MaxValuesGain_IT == true) Serial.println(F("Gain and Integration Time at maximum"));
     Lux_VEML = ConvFunction(NbrCounts, IntegrationTime, VEML_Gain);
     #ifdef messagesON
-      Serial.print(F("Ambient light sensor in lux (calculated value): "));
-      Serial.println(Lux_VEML);
-      Serial.print(F("\n\t\tLux value measured: "));
-      Serial.println(Measure);
+      //Serial.print(F("\t\uFFED Ambient light sensor in lux (calculated value): "));
+      //Serial.println(Lux_VEML);
+      Serial.println(F("\t\uFFED Ambient light sensor"));
+      Serial.print(F("\n\t\t\u2714 Lux value measured: "));
+      Serial.print(Measure);
+      Serial.println(F(" lux"));
       DividerVEML7700(80, true, '*');
     #endif
     //DisplayFeatures();
   }
+  Flags |= (1<<StopTheWatchdogTimer);
   return Measure;
 }
 /**********************************************************************************************************************************/
@@ -317,7 +327,7 @@ boolean VEML7700Initialization(void) {
     VEML_Gain = VEML7700_GAIN_1_8;
     veml.setGain((uint8_t)VEML_Gain);                     // ALS gain x 1/8 to avoid saturation of the output stage amplifier
     IntegrationTime = VEML7700_IT_100MS;
-    veml.setIntegrationTime((uint8_t)VEML7700_IT_100MS);  // integration time has to be little a initialization
+    veml.setIntegrationTime((uint8_t)VEML7700_IT_100MS);  // integration time has to be little on initialization
     Serial.println(F("[VEML7700] Luminosity probe initialization succeeded..."));
   }
   return LuminosityProbePresent;
@@ -328,7 +338,7 @@ boolean VEML7700Initialization(void) {
 void DividerVEML7700(uint8_t nbr_carac, boolean CRLFChar, char caract) {
   uint8_t i;
   for (i = 0; i < nbr_carac; i++) Serial.print(caract);
-  if (CRLFChar == true) Serial.println();
+  //if (CRLFChar == true) Serial.println(" ");
 }
 
 

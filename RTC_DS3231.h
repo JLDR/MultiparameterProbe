@@ -17,7 +17,6 @@
 /* constantes */
 #define       Space                 0x20
 #define       Null                  '\0'              // 0 ou '\0'
-#define       F_cpu                 16000000UL
 //#define       LF                    0x0A              // '\n'
 //#define       CR                    0x0D              // '\r'
 #define       SQW_RATE_1            0                 // void enableOscillator(bool TF, bool battery, byte frequency); 
