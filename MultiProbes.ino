@@ -17,7 +17,6 @@
 #include      "veml7700_functions.h"
 #include      "RTC_DS3231.h"
 #include      "SIM800L.h"
-//#include      "Usart.h"
 
 /******************************* local variables *******************************/
 float                       Mes_pH, Mes_EC, Mes_ORP, Mes_DO, Mes_RTD;           // Atlas Scientific sensors
@@ -76,7 +75,9 @@ void setup() {
   Flags = 0;                                                        // external variable for flags UsingTimer1Interrupt, WatchdogDelayForGPRS, StopTheWatchdogTimer
 
   #ifdef SIM800Lpresent
-    InitSIM800L();                                 // execution time would might be longer than other functions
+    Serial1.begin(115200);                                          // display the informations about UART1 connections TxD and RxD
+    while(!Serial1);                                                // wait availability UART1 connection from SIM800L
+    InitSIM800L();                                                  // execution time would might be longer than other functions
   #endif
   #ifdef ADS115Connected
     ADCStart(GAIN_ONE);
@@ -125,14 +126,6 @@ void loop() {
       SecondsDelay = SamplingState.CompleteIntervalInSeconds;
       cmpt1 = 0;                                                      // the timer1 is used and is programmed for a time delay of 5 ms
     }
-    /* USART */
-//    if (Command.startsWith("uart")) ConfigUART(Command);              // 'uart'<d_d_dAd> (uart1_6_8N1)
-//    if (Command.startsWith("intuart")) ConfigINTUART(Command);        // 'intuart'<d>
-//    if (Command.startsWith("stopintuart")) StopINTUART(Command);      // 'intuart'<d>
-//    if (Command.startsWith("enableuart")) EnableUART(Command);        // 'enableuart'<d>
-//    if (Command.startsWith("disableuart")) DisableUART(Command);      // 'disableuart'<d>
-//    if (Command.startsWith("helpuart")) UsartHelp();
-//    if (Command.startsWith("testuart")) UART_TxRx_tieded(Command);   // 'testuart'<d>
     /* RTC */
     if (Command.startsWith("cfgtime_")) Change_heure(Command);        // 'cfgtime_'<hhmmss>
     if (Command.startsWith("cfgdate_")) Change_date(Command);         // 'cfgdate_'<aaaammjj>
@@ -151,7 +144,7 @@ void loop() {
   }
 
   if (SecondsDelay == 0) {            // the only criterion to send an HTTP command automatically according to a time delay and to define this value only one time
-    SamplingState = SamplingDelayMeasure("repeat300s", SamplingState);            // called only one time and the output fix SamplingState.RepeatedMeasures true
+    SamplingState = SamplingDelayMeasure("repeat60s", SamplingState);            // called only one time and the output fix SamplingState.RepeatedMeasures true
     SecondsDelay = SamplingState.CompleteIntervalInSeconds;
     AllMeas = Reading_probes("measall");                                          // allows to force the sleep mode of Atlas Scientific sensors
     #ifdef ADS115Connected

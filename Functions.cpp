@@ -1369,7 +1369,7 @@ void AfficheAdresseCapteur(void) {
 void Divider(uint8_t nbr_carac, boolean CRLFChar, char caract) {
   uint8_t i;
   for (i = 0; i < nbr_carac; i++) Serial.print(caract);
-  //if (CRLFChar == true) Serial.println();
+  if (CRLFChar == true) Serial.println();
 }
 /**********************************************************************************************************************************/
 /* Function to read the temperature of only one probe.                                                                            */

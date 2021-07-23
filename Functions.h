@@ -27,7 +27,7 @@
 //#define       CR                  0x0D      // '\r' this acronym is already used by the core
 #define       Space               0x20
 #define       Null                0         // '\0'
-#define       DS18B20Temp         11
+#define       DS18B20Temp         10
 
 #define       Timer0_ON           0
 #define       Timer1_ON           1

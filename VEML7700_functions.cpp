@@ -338,7 +338,7 @@ boolean VEML7700Initialization(void) {
 void DividerVEML7700(uint8_t nbr_carac, boolean CRLFChar, char caract) {
   uint8_t i;
   for (i = 0; i < nbr_carac; i++) Serial.print(caract);
-  //if (CRLFChar == true) Serial.println(" ");
+  if (CRLFChar == true) Serial.println();
 }
 
 

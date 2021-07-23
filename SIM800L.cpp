@@ -28,8 +28,8 @@ extern uint8_t              BusyTimeForWatchdog, Flags;                         
 
 /* Class instances which are objects with public methods and private attributes */
 // GSMSim Library (https://github.com/erdemarslan/GSMSim) ou (https://www.arduinolibraries.info/libraries/gsm-sim)
-GSMSimHTTP MyHttpURL(Serial1, ResetPIN);                  // GSMSimHTTP(Stream& s, unsigned int resetPin) : GSMSimGPRS(s, resetPin) {...}
-GSMSimSMS MySMS(Serial1, ResetPIN);                       // GSMSimSMS(Stream& s, unsigned int resetPin) : GSMSim(s, resetPin) {...}
+GSMSimHTTP http(Serial1, ResetPIN);                  // GSMSimHTTP(Stream& s, unsigned int resetPin) : GSMSimGPRS(s, resetPin) {...}
+//GSMSimSMS MySMS(Serial1, ResetPIN);                       // GSMSimSMS(Stream& s, unsigned int resetPin) : GSMSim(s, resetPin) {...}
 /**********************************************************************************************************************************/
 /* Function to read the IP address of the server. The IP address is loaded using a constant declaration as #define                */
 /**********************************************************************************************************************************/
@@ -81,33 +81,37 @@ void InitSIM800L() {
   Serial.print(F("[SIM800L] Pin number: "));
   DisplayArrayContent(&PinNumberArray[0], true);
 
-  TestPINmode();
   Serial.println("[SIM800L] Connecting to GSM network");
   Serial.print(F("[SIM800L] GSM Initialization pending"));
-  compt1 = 0;
+  compt1 = 0;                                                     // criterio to display '.'
   Flags |= ((1<<UsingTimer1Interrupt)|(1<<WatchdogDelayArmed));   // for a mandatory interruption
   BusyTimeForWatchdog = BusyTimeForGSM;
-  MyHttpURL.init();                                               // inheritance from GSMSimGPRS.h which inherits from GSMSim.h
+  http.init();                                               // inheritance from GSMSimGPRS.h which inherits from GSMSim.h
   Flags |= (1<<StopTheWatchdogTimer);
   Flags &= ~(1<<UsingTimer1Interrupt);
   Flags |= (1<<GSMInitialized);
-  Serial.println(F("\n[SIM800L] GSM initialized\n"));
+  Serial.println(F("\n[SIM800L] GSM initialized"));
+  TestPINmode();
   Serial.print("[SIM800L] Is Module Registered to Network? ");
-  Status = MyHttpURL.isRegistered();                              // bool GSMSim::isRegistered() {...} "AT+CREG?"
+  Status = http.isRegistered();                              // bool GSMSim::isRegistered() {...} "AT+CREG?"
   if (Status == true) Serial.println(F("=> Registered"));
   else Serial.println(F("=> Not registerd or registration denied"));
   Serial.print("[SIM800L] Signal Quality: ");
-  SignQuality = MyHttpURL.signalQuality();                        // unsigned int GSMSim::signalQuality() {...}
+  SignQuality = http.signalQuality();                        // unsigned int GSMSim::signalQuality() {...}
   Serial.println(SignQuality, DEC);
-  Serial.print("[SIM800L] Service Provider Name from SIM: ");
-  Serial.println(MyHttpURL.operatorNameFromSim());                // "AT+CSPN=?" String GSMSim::operatorNameFromSim() {...}
+  //Serial.print("[SIM800L] Service Provider Name from SIM: ");
+  //Serial.println(http.operatorNameFromSim());                // "AT+CSPN=?" String GSMSim::operatorNameFromSim() {...} (blocking function)
+
   
-  Serial.print(F("[SIM800L] GPRS Access Point Name defined"));
-  MyHttpURL.gprsInit(AccesPointName);                             // non blocking function (void GSMSimGPRS::gprsInit(String apn) {APN = apn;})
+  Serial.println(F("[SIM800L] GPRS Access Point Name defined"));
+  http.gprsInit(AccesPointName);                             // non blocking function (void GSMSimGPRS::gprsInit(String apn) {APN = apn;})
   Flags |= (1<<APNInitialized);
   Serial.print("[SIM800L] Get IP address: ");
-  IP_address = MyHttpURL.getIP();
-  Serial.println(IP_address);
+  Serial.println(http.getIP());
+  //IP_address = http.getIP();                               // blocking function
+  //Serial.println(IP_address);
+  Serial.print("Is module connected to GPRS? ");
+  Serial.println(http.connect());
   
   DividerSIM800L(80, true, '-');
 }
@@ -146,9 +150,9 @@ boolean URL_EntirePacket(float DO, float pH, float ORP, float EC, float DS18, fl
   OVH_IP.reserve(15);
   AnswerFromSIM800L.reserve(50);
 
-  LocalURL.concat(StartFrame);                  // "GET /"
+  LocalURL.concat(GET_Command);                  // "GET /"
   //LocalURL.concat(EconectReceiveDatas);         // "cgi-bin/econect/receive_data.py?location=aquacosme1"
-  LocalURL.concat(EconectAquacosme2Site);       // "cgi-bin/econect/prepare_data.py?location=aquacosme2"
+  LocalURL.concat(EconectSiteFrancon);          // "cgi-bin/econect/prepare_data.py?location=aquacosme2"
   LocalURL.concat(TempDS18B20Topic);            // "&temp_eau="
   //MyGSMMeasures.Temp_GSMValue = 18.563;
   ConvFloatToStringWithSign(MyGSMMeasures.Temp_GSMValue, 2, FloatToAsciiArray);
@@ -207,8 +211,8 @@ boolean URL_EntirePacket(float DO, float pH, float ORP, float EC, float DS18, fl
   LocalURL.concat(EndFrame);                    // #define EndFrame " HTTP/1.1"
   LocalURL.concat("\r\n");
   LocalURL.concat(HeaderHost);                  // "Host: "
-  //LocalURL.concat(ServerOVH_Address);           // "145.239.199.14"
-  LocalURL.concat(ServerArnaud);                // "82.64.109.143"
+  LocalURL.concat(ServerOVH_Address);           // "145.239.199.14"
+  //LocalURL.concat(ServerArnaud);                // "82.64.109.143"
   LocalURL.concat("\r\n");
   LocalURL.concat(CloseFrame);                  // #define CloseFrame "Connection: close"
   LocalURL.concat("\r\n\r\n");
@@ -234,12 +238,12 @@ boolean URL_EntirePacket(float DO, float pH, float ORP, float EC, float DS18, fl
     compt1 = 0;                                                     // criterio to display '.'
     Flags |= ((1<<UsingTimer1Interrupt)|(1<<WatchdogDelayArmed));   // flag WatchdogDelayForGPRS allows to activate
     BusyTimeForWatchdog = BusyTimeForGPRSconnect;
-    Status = MyHttpURL.connect();                                   // blocking function
+    Status = http.connect();                                   // blocking function
     Flags |= (1<<StopTheWatchdogTimer);                             // Timer3 will reset the watchdog
     Flags &= ~(1<<UsingTimer1Interrupt);
     if (Status == true) {
       Serial.println(F("[SIM800L] Sending data in progress"));
-      AnswerFromSIM800L = MyHttpURL.get(LocalURL, true);            // String GSMSimHTTP::get(String url, bool read) {...}
+      AnswerFromSIM800L = http.get(LocalURL, true);            // String GSMSimHTTP::get(String url, bool read) {...}
       Serial.print(F("[SIM800L] Answer from SIM800L: "));
       Serial.println(AnswerFromSIM800L);
       ConnectError = false;                                         // local variable returned to inform the calling module 
@@ -248,10 +252,10 @@ boolean URL_EntirePacket(float DO, float pH, float ORP, float EC, float DS18, fl
       ConnectError = true;
     }
     Flags &= ~(1<<APNInitialized);                                  // in order to restart a new initialization of the GSM for each GPRS frame
-    Status = MyHttpURL.closeConn();
+    Status = http.closeConn();
     Serial.print(F("Network Status from GPRS after switching off: "));
-    if (Status == true) println(F("OK"));
-    else println(F("ERROR"));
+    if (Status == true) Serial.println(F("OK"));
+    else Serial.print(F("ERROR"));
   #endif
   
   DividerSIM800L(80, true, '-');
@@ -390,28 +394,28 @@ void GSM_Parameters() {
   ReadFlags = Flags;
   ReadFlags &= (1<<GSMInitialized);
   if (ReadFlags != 0) {
-    GSM_Answer = MyHttpURL.moduleIMEI();
+    GSM_Answer = http.moduleIMEI();
     GSM_Answer.replace("\n", "");
     if (GSM_Answer != "") {
       Serial.print(F("IMEI code: "));
       Serial.println(GSM_Answer);
     }
-    GSM_Answer = MyHttpURL.operatorName();
+    GSM_Answer = http.operatorName();
     Serial.print(F("Operator name: "));
     Serial.println(GSM_Answer);
-    GSM_Answer = MyHttpURL.moduleManufacturer();
+    GSM_Answer = http.moduleManufacturer();
     Serial.print(F("Module Manufacturer: "));
     Serial.println(GSM_Answer);
-    GSM_Answer = MyHttpURL.moduleModel();
+    GSM_Answer = http.moduleModel();
     Serial.print(F("Module model: "));
     Serial.println(GSM_Answer);
-    GSM_Answer = MyHttpURL.moduleRevision();
+    GSM_Answer = http.moduleRevision();
     Serial.print(F("Module Revision: "));
     Serial.println(GSM_Answer);
-    GSM_Answer = MyHttpURL.moduleIMSI();
+    GSM_Answer = http.moduleIMSI();
     Serial.print(F("International Mobile Subscriber Identity: "));
     Serial.println(GSM_Answer);
-    GSM_Answer = MyHttpURL.moduleICCID();
+    GSM_Answer = http.moduleICCID();
     Serial.print(F("Integrated Circuit Card Identifier: "));
     Serial.println(GSM_Answer);
   } else Serial.println(F("GSM has not been initiated..."));
@@ -420,43 +424,43 @@ void GSM_Parameters() {
 /* Function to send a SMS message to a mobile phone.                                                                              */
 /* The control command looks like 'sms_'<My text>                                                                                 */
 /**********************************************************************************************************************************/
-void SendSMS(String Cde_received) {
-  boolean Status;
-  uint8_t ReadFlags;
-  String Answer;
-  String PhoneNumber;
-  char Message[50];
-  char CellPhoneOrIPaddress[15];
-  Answer.reserve(32);
-  PhoneNumber.reserve(15);
-  PhoneNumber = JLDRnumero;
-  memset(CellPhoneOrIPaddress, Null, sizeof(CellPhoneOrIPaddress));
-  PhoneNumber.toCharArray(CellPhoneOrIPaddress, PhoneNumber.length() + 1);
-  memset(Message, Null, sizeof(Message));
-  Cde_received = Cde_received.substring(4);
-  Cde_received.toCharArray(Message, Cde_received.length() + 1);
-
-  ReadFlags = Flags;
-  ReadFlags &= (1<<GSMInitialized);
-  if (ReadFlags != 0) {                               // has been initiated
-    Status = MyHttpURL.setPhoneFunc(1);
-    if (Status == true) {
-      Status = MySMS.initSMS();
-      if (Status == true) Serial.println(F("SMS initialization is OK"));
-      else Serial.println(F("SMS initialization is wrong"));
-      Answer = MySMS.list(true);
-      Serial.print(F("List of SMS indices: "));
-      Serial.println(Answer);
-      Status = MySMS.send(&CellPhoneOrIPaddress[0], &Message[0]);
-      if (Status == true) {
-        Serial.print(F("[SMS] Recipient: "));
-        Serial.println(PhoneNumber);
-        Serial.print(F("[SMS] Message: "));
-        Serial.println(Cde_received);
-      }
-    }
-  }
-}
+//void SendSMS(String Cde_received) {
+//  boolean Status;
+//  uint8_t ReadFlags;
+//  String Answer;
+//  String PhoneNumber;
+//  char Message[50];
+//  char CellPhoneOrIPaddress[15];
+//  Answer.reserve(32);
+//  PhoneNumber.reserve(15);
+//  PhoneNumber = JLDRnumero;
+//  memset(CellPhoneOrIPaddress, Null, sizeof(CellPhoneOrIPaddress));
+//  PhoneNumber.toCharArray(CellPhoneOrIPaddress, PhoneNumber.length() + 1);
+//  memset(Message, Null, sizeof(Message));
+//  Cde_received = Cde_received.substring(4);
+//  Cde_received.toCharArray(Message, Cde_received.length() + 1);
+//
+//  ReadFlags = Flags;
+//  ReadFlags &= (1<<GSMInitialized);
+//  if (ReadFlags != 0) {                               // has been initiated
+//    Status = http.setPhoneFunc(1);
+//    if (Status == true) {
+//      Status = MySMS.initSMS();
+//      if (Status == true) Serial.println(F("SMS initialization is OK"));
+//      else Serial.println(F("SMS initialization is wrong"));
+//      Answer = MySMS.list(true);
+//      Serial.print(F("List of SMS indices: "));
+//      Serial.println(Answer);
+//      Status = MySMS.send(&CellPhoneOrIPaddress[0], &Message[0]);
+//      if (Status == true) {
+//        Serial.print(F("[SMS] Recipient: "));
+//        Serial.println(PhoneNumber);
+//        Serial.print(F("[SMS] Message: "));
+//        Serial.println(Cde_received);
+//      }
+//    }
+//  }
+//}
 /**********************************************************************************************************************************/
 /* Function to get the number of character in an array. Stopped until it detects the Null character '\0'.                         */
 /* Function has been checked several times.                                                                                       */
@@ -508,38 +512,39 @@ void FillShortAnswerArray() {
 /* Function to test the status of GSM using the AT command "AT+CPIN?" using the method pinStatus().     */
 /********************************************************************************************************/
 void TestPINmode() {
-  unsigned int PINstatus;
+  unsigned int PINstatus = 8;
   String PinNumber;                                     // Pin code
   boolean Status;
   PinNumber.reserve(5);
   PinNumber = PinNumberInUse;
   memset(PinNumberArray, Null, sizeof(PinNumberArray));
   PinNumber.toCharArray(PinNumberArray, PinNumber.length() + 1);
-  PINstatus = MyHttpURL.pinStatus();
+  PINstatus = http.pinStatus();                    // non blocking function
+  Serial.print(F("[SIM800L] Pin code output: ")); Serial.println(PINstatus, DEC);
   switch (PINstatus) {
-    case 0:
-      Serial.println(F("The Mobile termination is ready to be used"));
+    case (unsigned int)0:
+      Serial.println(F("[SIM800L] The Mobile termination is ready to be used"));
       break;
     case 1:
-      Serial.println(F("The Mobile termination is waiting the PIN code"));
-      Status = MyHttpURL.enterPinCode(&PinNumberArray[0]);
-      if (Status == true) Serial.println(F("The phone has been unlocked using PIN code"));
-      else Serial.println(F("The PIN code does not match the stored code"));
+      Serial.println(F("[SIM800L] The Mobile termination is waiting the PIN code"));
+      Status = http.enterPinCode(&PinNumberArray[0]);
+      if (Status == true) Serial.println(F("[SIM800L] The phone has been unlocked using PIN code"));
+      else Serial.println(F("[SIM800L] The PIN code does not match the stored code"));
       break;
     case 2:
-      Serial.println(F("The Mobile termination is waiting the PUK code"));
+      Serial.println(F("[SIM800L] The Mobile termination is waiting the PUK code"));
       break;
     case 3:
-      Serial.println(F("The Mobile termination is waiting for antitheft SIM code"));
+      Serial.println(F("[SIM800L] The Mobile termination is waiting for antitheft SIM code"));
       break;
     case 4:
-      Serial.println(F("The Mobile termination is waiting for antitheft PUK code"));
+      Serial.println(F("[SIM800L] The Mobile termination is waiting for antitheft PUK code"));
       break;
     case 5:
-      Serial.println(F("The Mobile termination is waiting the PIN2 code"));
+      Serial.println(F("[SIM800L] The Mobile termination is waiting the PIN2 code"));
       break;
     case 6:
-      Serial.println(F("The Mobile termination is waiting the PUK2 code"));
+      Serial.println(F("[SIM800L] The Mobile termination is waiting the PUK2 code"));
       break;
     default:
       break;    

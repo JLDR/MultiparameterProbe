@@ -9,17 +9,21 @@
 #include      <stdint.h>
 #include      <stdlib.h>
 #include      <GSMSimHTTP.h>        // => #include "GSMSimGPRS.h" => #include "GSMSim.h" => #include <Arduino.h>
-#include      <GSMSimSMS.h>
+//#include      <GSMSimSMS.h>
 
 /*************************** Shared compilation directives which have to be activated or inhibited in each header files where they are necessary ***************************/
 #define       TextOnTerminalForSIM800L          // has to be unique or specific to this module (which is 2 files .cpp and .h)
-//#define       SIM800Lpresent                    // used to initialize the GSM board
+#define       SIM800Lpresent                    // used to initialize the GSM board
 #define       GSMChangeSIMcodeFromPUKcode       // used to change the SIM code knowing the Personal Unblocking Key code
 
 /*************************** CONSTANTS ***************************/
 // Global System for Mobile communications and General Packet Radio Service
-#define       PinNumberInUse              "8697"
-#define       PUKcodeSFR8697              "64701796"
+#define       PinNumberInUse              "0689"
+#define       PUKcodeInUse                "38272863"              
+#define       PinNumberToulouse           "8697"
+#define       PUKcodeToulouse             "64701796"
+#define       PinNumberFrancon            "0689"
+#define       PUKcodeFrancon              "38272863"
 #define       Default_AccessPointName     "sfr"
 #define       SFR_Connect_Web             "websfr"          // => SMS OK
 #define       SFR_Connect_SL              "slsfr"
@@ -37,7 +41,7 @@
 #define       GPRS_Password               ""
 #define       HeaderHost                  "Host: "
 #define       StartURL                    "http://"
-#define       StartFrame                  "GET /"
+#define       GET_Command                  "GET /"
 #define       httpGETcde2                 "GET / HTTP/1.1"
 #define       EndFrame                    " HTTP/1.1"
 #define       ServerOVH_Address           "145.239.199.14"
@@ -46,7 +50,7 @@
 #define       ServerPort                  80
 #define       JLDRnumero                  "+33611206107"
 #define       EconectReceiveDatas         "cgi-bin/econect/receive_data.py?location=aquacosme1"
-#define       EconectAquacosme2Site       "cgi-bin/econect/prepare_data.py?location=aquacosme2"
+#define       EconectSiteFrancon          "cgi-bin/econect/receive_data.py?location=francon"
 #define       TempDS18B20Topic            "&temp_eau="
 #define       pHTopic                     "&ph="
 #define       ORPTopic                    "&redox="
@@ -92,22 +96,22 @@
 #define       FacilityLock                "AT+CLCK="
 
 /*************************** General Purpose Input Output (GPIO) functions ***************************/
-#define       ResetPIN                    12
+#define       ResetPIN                    11
 
 /*************************** Flags ***************************/
-#define       UsingTimer1Interrupt    0
-#define       WatchdogDelayArmed      1         // Flag to inform that the watchdog has to be armed
-#define       StopTheWatchdogTimer    2
-#define       Flag3                   3
-#define       Flag4                   4
-#define       GSMInitialized          5
-#define       APNInitialized          6
-#define       Flag7                   7
+#define       UsingTimer1Interrupt        0
+#define       WatchdogDelayArmed          1         // Flag to inform that the watchdog has to be armed
+#define       StopTheWatchdogTimer        2
+#define       Flag3                       3
+#define       Flag4                       4
+#define       GSMInitialized              5
+#define       APNInitialized              6
+#define       Flag7                       7
 
 /*************************** compilation directives which are used only by this module ***************************/
-#define       BusyTimeForGSM          45        // maximum time for GSM initialization in seconds
-#define       BusyTimeForGPRSconnect  20        // GPRS initialization
-#define       BusyTimeForClient       5
+#define       BusyTimeForGSM              45        // maximum time for GSM initialization in seconds
+#define       BusyTimeForGPRSconnect      20        // GPRS initialization
+#define       BusyTimeForClient           5
 
 /********************************************** Predefined types **********************************************/
 typedef struct GSMProbeMeasures {
@@ -138,7 +142,7 @@ boolean URL_EntirePacket(float, float, float, float, float, float, float, float,
 void ConvFloatToStringWithSign(float, uint8_t, char *);
 uint8_t ConvertUint32ToASCIIChar(char *, uint8_t, uint32_t);
 void GSM_Parameters(void);
-void SendSMS(String);
+//void SendSMS(String);
 uint8_t GetNbrOfCharForGSM(char *);
 void software_Reset(void);
 void DisplayArrayContent(char *, boolean);
