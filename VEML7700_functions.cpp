@@ -2,7 +2,7 @@
 #include      "veml7700_functions.h"
 
 // Local variables used by this module
-uint16_t                    NbrCounts;                  // luminosity probe VEML7700
+uint16_t                    NbrCounts;                  // luminosity probe VEML7700 (uint16_t Adafruit_VEML7700::readALS() { return ALS_Data->read(); })
 Gain_t                      VEML_Gain;                  // enumeration which depends from library
 IntegrationTime_t           IntegrationTime;            // enumeration which depends from library
 float                       Measure;
@@ -18,32 +18,32 @@ Adafruit_VEML7700 veml = Adafruit_VEML7700();
 
 /**********************************************************************************************************************************/
 /* Function to get only one measure from the VEML7700 probe.                                                                      */
-/* Gain_t VEML_Gain, IntegrationTime_t IntegrationTime
+/* Gain_t VEML_Gain, IntegrationTime_t IntegrationTime                                                                            */
 /**********************************************************************************************************************************/
 float luxmeter(boolean ProbeReady) {
-  boolean MaxValuesGain_IT = false;         // to detect the maximum values for integration time and gain
+  boolean MaxValuesGain_IT = false;             // to detect the maximum values for integration time and gain
   uint8_t k;
   Flags |= (1<<WatchdogDelayArmed);
-  BusyTimeForWatchdog = BusyTimeForVEML7700;
+  BusyTimeForWatchdog = BusyTimeForVEML7700;    // #define BusyTimeForVEML7700 3 (maximum time for light sensor in seconds)
   
   NbrCounts = veml.readALS();
   if (ProbeReady == true) {
     do {
-      NbrCounts = veml.readALS();
+      NbrCounts = veml.readALS();               // uint16_t NbrCounts;
       if (NbrCounts <= 100) {
         //veml.powerSaveEnable(true);
-        VEML_Gain = (Gain_t)veml.getGain();                                 // uint8_t Adafruit_VEML7700::getGain(void) { return ALS_Gain->read(); }
+        VEML_Gain = (Gain_t)veml.getGain();                                   // uint8_t Adafruit_VEML7700::getGain(void) { return ALS_Gain->read(); }
         if (VEML_Gain != VEML7700_GAIN_2) increaseGain(VEML_Gain);
-        else {                // here VEML_Gain == VEML7700_GAIN_2
+        else {                                                                // here VEML_Gain == VEML7700_GAIN_2
           IntegrationTime = (IntegrationTime_t)veml.getIntegrationTime();
           if (IntegrationTime != VEML7700_IT_800MS) increaseIntegrationTime(IntegrationTime);
-          else {              // here IntegrationTime == VEML7700_IT_800MS
+          else {                                                              // here IntegrationTime == VEML7700_IT_800MS
             MaxValuesGain_IT = true;
-            break;            // normaly break allows to quit the do while instruction
+            break;                                                            // normaly break allows to quit the do while instruction
           }
         }
         //veml.powerSaveEnable(false);
-      } else if (NbrCounts > 10000) {     // ALS countings are superior than 10000 => decrease integration time 
+      } else if (NbrCounts > 10000) {                                         // ALS countings are superior than 10000 => decrease integration time 
         IntegrationTime = (IntegrationTime_t)veml.getIntegrationTime();
         if (IntegrationTime != VEML7700_IT_25MS) decreaseIntegrationTime(IntegrationTime);
       }
@@ -56,8 +56,8 @@ float luxmeter(boolean ProbeReady) {
     //White_VEML = veml.readWhite();
     //White_VEML_Norm = veml.readWhiteNormalized();
     if (MaxValuesGain_IT == true) Serial.println(F("Gain and Integration Time at maximum"));
-    Lux_VEML = ConvFunction(NbrCounts, IntegrationTime, VEML_Gain);
-    #ifdef messagesON
+    Lux_VEML = ConvFunction(NbrCounts, IntegrationTime, VEML_Gain);           // float Lux_VEML;
+    #ifdef messagesON_ALS
       //Serial.print(F("\t\uFFED Ambient light sensor in lux (calculated value): "));
       //Serial.println(Lux_VEML);
       Serial.println(F("\t\uFFED Ambient light sensor"));
@@ -324,10 +324,10 @@ boolean VEML7700Initialization(void) {
     Serial.println(F("[Error] Probe VEML7700 is not present..."));
   } else {
     LuminosityProbePresent = true;
-    VEML_Gain = VEML7700_GAIN_1_8;
+    VEML_Gain = VEML7700_GAIN_1_8;                        // using application note from VISHAY
     veml.setGain((uint8_t)VEML_Gain);                     // ALS gain x 1/8 to avoid saturation of the output stage amplifier
     IntegrationTime = VEML7700_IT_100MS;
-    veml.setIntegrationTime((uint8_t)VEML7700_IT_100MS);  // integration time has to be little on initialization
+    veml.setIntegrationTime((uint8_t)VEML7700_IT_100MS);  // integration time recommanded on datasheet for initialization
     Serial.println(F("[VEML7700] Luminosity probe initialization succeeded..."));
   }
   return LuminosityProbePresent;

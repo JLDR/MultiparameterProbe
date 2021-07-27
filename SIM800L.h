@@ -44,7 +44,7 @@
 #define       GET_Command                  "GET /"
 #define       httpGETcde2                 "GET / HTTP/1.1"
 #define       EndFrame                    " HTTP/1.1"
-#define       ServerOVH_Address           "145.239.199.14"
+#define       ServerOVH_Address           "145.239.199.14"              // Virtual Private Server (VPS)
 #define       ServerArnaud                "82.64.109.143"
 #define       CloseFrame                  "Connection: close"
 #define       ServerPort                  80
