@@ -9,9 +9,9 @@ float                       Measure;
 float                       Lux_VEML, Lux_VEML_Norm, White_VEML, White_VEML_Norm;
 
 /******************************* External variables (Solution to share state from other modules) *******************************/
-extern volatile uint16_t    cmpt1, cmpt2, cmpt3, cmpt4, cmpt5, cmpt_5ms;                  // Timers (also defined in Functions.h)
-extern volatile uint8_t     compt1, compt2, compt3, compt4, compt5, cmpt_100us;           // Timers (also defined in Functions.h)
-extern uint8_t              BusyTimeForWatchdog, Flags;                                   // global variables defined in Functions.h and tied to the timers and the watchdog
+extern volatile uint16_t    cmpt1, cmpt2, cmpt3, cmpt4, cmpt5, cmpt_5ms;                      // Timers (also defined in Functions.h)
+extern volatile uint8_t     compt1, compt2, compt3, compt4, compt5, cmpt_100us, CmptLedD13;   // Timers (also defined in Functions.h)
+extern uint8_t              BusyTimeForWatchdog, Flags;                                       // global variables defined in Functions.h and tied to the timers and the watchdog
 
 /* Class instances which are objects with public methods and private attributes */
 Adafruit_VEML7700 veml = Adafruit_VEML7700();

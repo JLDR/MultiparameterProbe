@@ -22,9 +22,9 @@ char                  PUKcodeofTheSimCard[9];
 char                  Answer[12];
 
 /******************************* External variables (Solution to share state from other modules) *******************************/
-extern volatile uint16_t    cmpt1, cmpt2, cmpt3, cmpt4, cmpt5, cmpt_5ms;                  // Timers (also defined in Functions.h)
-extern volatile uint8_t     compt1, compt2, compt3, compt4, compt5, cmpt_100us;           // Timers (also defined in Functions.h)
-extern uint8_t              BusyTimeForWatchdog, Flags;                                   // global variables defined in Functions.h and tied to the timers and the watchdog
+extern volatile uint16_t    cmpt1, cmpt2, cmpt3, cmpt4, cmpt5, cmpt_5ms;                      // Timers (also defined in Functions.h)
+extern volatile uint8_t     compt1, compt2, compt3, compt4, compt5, cmpt_100us, CmptLedD13;   // Timers (also defined in Functions.h)
+extern uint8_t              BusyTimeForWatchdog, Flags;                                       // global variables defined in Functions.h and tied to the timers and the watchdog
 
 /* Class instances which are objects with public methods and private attributes */
 // GSMSim Library (https://github.com/erdemarslan/GSMSim) ou (https://www.arduinolibraries.info/libraries/gsm-sim)

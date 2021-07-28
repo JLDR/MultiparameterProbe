@@ -45,9 +45,9 @@ boolean                     HttpCdeHasFailed;
 PowerSwitches_t             PoweredDevices;
 
 /******************************* External variables *******************************/
-extern volatile uint16_t    cmpt1, cmpt2, cmpt3, cmpt4, cmpt5, cmpt_5ms;                  // Timers
-extern volatile uint8_t     compt1, compt2, compt3, compt4, compt5, cmpt_100us;           // Timers
-extern uint8_t              Flags;
+extern volatile uint16_t    cmpt1, cmpt2, cmpt3, cmpt4, cmpt5, cmpt_5ms;                        // Timers (also defined in Functions.h)
+extern volatile uint8_t     compt1, compt2, compt3, compt4, compt5, cmpt_100us, CmptLedD13;     // Timers (also defined in Functions.h)
+extern uint8_t              Flags;                                                              // global variables defined in Functions.h and tied to the timers and the watchdog
 
 /********************************* Initialization *********************************/
 void setup() {
@@ -156,6 +156,12 @@ void loop() {
 
   /* Area to apply actions on the probes, on the communication flows or to manage a sampling interval */
   if (SamplingState.RepeatedMeasures == true) {
+    if (CmptLedD13 < 20) digitalWrite(LED_BUILTIN, HIGH);                               // ON during 100 ms
+    else if (CmptLedD13 >= 20 && CmptLedD13 < 200) digitalWrite(LED_BUILTIN, LOW);      // OFF during 900 ms
+    else {
+      digitalWrite(LED_BUILTIN, HIGH);
+      CmptLedD13 = 0;
+    }
     if (cmpt1 >= 200) {                         // the time interval base (1 second) (cmpt3 for 200 ms delay time and cmpt1 for 5 ms delay time)
       cmpt1 -= 200;                             // if cmpt3 used (cmpt3 >= 5) and cmpt3 -= 5
       SecondsDelay--;
@@ -167,7 +173,7 @@ void loop() {
           InitSIM800L();
         #endif
       }
-      if (SecondsDelay == 0) {
+      if (SecondsDelay == 0) {                                            // elapse time between two sampling measures
         if (GSMErrorCounter == FollowingErrors) {                         // #define FollowingErrors 2
           GSMErrorCounter = 0;
           #ifdef SIM800Lpresent

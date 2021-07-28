@@ -11,7 +11,7 @@
 
 /* Local variables used by this module */
 volatile uint16_t           cmpt1, cmpt2, cmpt3, cmpt4, cmpt5, cmpt_5ms;
-volatile uint8_t            compt1, compt2, compt3, compt4, compt5, cmpt_100us;
+volatile uint8_t            compt1, compt2, compt3, compt4, compt5, cmpt_100us, CmptLedD13;
 volatile uint8_t            FlagsReader;
 uint8_t                     BusyTimeForWatchdog, Flags;   // global variables used for GSM and tied to the timers and the watchdog
 uint8_t                     WatchdogCounter = 0;
@@ -60,6 +60,7 @@ ISR(TIMER1_COMPA_vect) {
   compt1++;                           // 8 bits
   cmpt1++;                            // 16 bits
   cmpt_5ms++;                         // 16 bits
+  CmptLedD13++;                       // 8 bits
   FlagsReader = Flags;
   FlagsReader &= (1<<UsingTimer1Interrupt);   // This flag is declared by only one module at the same time
   if (FlagsReader != 0) {
@@ -1946,7 +1947,7 @@ ElapsedTime_t IncrementMyGSMtime(ElapsedTime_t MyTime) {
   if (MyTime.seconds == 60) {
     MyTime.seconds = 0;
     MyTime.minutes++;
-    if (MyTime.minutes == NbrMinutesToResetGSM) {           // #define NbrMinutesToResetGSM 60
+    if (MyTime.minutes == NbrMinutesToResetGSM) {           // #define NbrMinutesToResetGSM 60 (every hours)
       MyTime.minutes = 0;
       MyTime.ResetGSM = true;
     }
